@@ -1,0 +1,3435 @@
+---
+title: "Main Program"
+output: html_notebook
+---
+
+```{r removing_Data,include=FALSE}
+# removing all the variables in the environment
+rm(list = ls())
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	eval = FALSE,
+	message = FALSE,
+	include = FALSE
+)
+# library(reticulate)
+# use_virtualenv("r-reticulate")
+```
+
+```{r loading_Pakages,include=FALSE}
+# loading some pakages
+#library(xlsx) # loading the library pakage to import excel files
+
+# install.packages(c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments",
+#                    "leaps","devtools","catools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima"))
+
+
+library(ggplot2) # plotting the dataset
+library(dplyr) # manupulating the dataframe
+library(GGally)# scatter matrix plot
+library(plotly)# plotting pakage
+library(AID) # pakagef for box cox tranformation
+library(MASS) # general stats pakage
+library(boxcoxmix) # for boxcox tranformation
+library(car)
+library(moments)
+library(leaps)
+library(devtools)
+library(caTools)
+library(readxl) # loading the library pakage to import excel files
+library(dplyr)# pakage for data manipulation
+library(class)
+library(ROCR) # pakage for ROC and AUC for classification
+library(qwraps2) #
+library(knitr) # for formating R-Markdown
+library(e1071) # pakage for SVM
+library(glmnet)# lasso and ridge regression
+library(gam) # package for generalized additive model
+library(splines) # package for fitting regression splines
+library(akima) # akima
+
+```
+
+# Loading Dataset
+First step is to load the data set. The soil database from Burrogh is loaded. The parameters used are Liquid limit(LL), Plastic Limit (PL), Plasticity Index (PI), Clay/Silt fraction , Sand fraction , Gravel fraction, % Lime, % cement and % of Asphalt.
+
+```{r loading_dataset,warning=FALSE}
+# Loading all the Australian Soil data. 
+raw.data = read_excel("C:/Users/amitgajurel/Google Drive/Thesis/Data/Australian Soils.xlsx",sheet = "all_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+raw.data = raw.data[complete.cases(raw.data),]
+attach(raw.data)
+raw.data.allsoil = raw.data[,c("LL","PL","PI","Linear Shrinkage (LS)","Clay","Sand","Gravel","UCS (Mpa)","Lime","Cement","Asphalt")] # creating new dataframe with only paramters required
+raw.data.allsoil$UCS.psi = raw.data.allsoil$`UCS (Mpa)`*0.145038*1000
+strength.limit = 300 # cutoff limit for strength class#fication in psi is taken as median for now
+#strength.limit = median(raw.data.allsoil$UCS.psi) # cutoff limit for strength classification in psi is taken as median for now
+raw.data.allsoil$UCS.code = ifelse(raw.data.allsoil$UCS.psi<strength.limit,"Fail","Pass")
+detach(raw.data)
+
+# loading dataset for Montana Soils
+raw.data.montana = read_excel("C:/Users/amitgajurel/Google Drive/Thesis/Data/Australian Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+raw.data.montana$UCS.psi = raw.data.montana$`UCS (Mpa)`
+raw.data.montana$UCS.code = ifelse(raw.data.montana$UCS.psi<strength.limit,"Fail","Pass")
+```
+
+# Defining Functions 
+```{r function,include=FALSE}
+# function for multiplot
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL){
+  library(grid)
+  
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+  
+  numPlots = length(plots)
+  
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  
+  if (numPlots==1) {
+    print(plots[[1]])
+    
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+    
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+
+# function to read certain lines of the code
+sourcePartial <- function(fn,startTag='#from here',endTag='#to here') {
+  lines <- scan(fn, what=character(), sep="\n", quiet=TRUE)
+  st<-grep(startTag,lines)
+  en<-grep(endTag,lines)
+  tc <- textConnection(lines[(st+1):(en-1)])
+  source(tc)
+  close(tc)
+}
+
+
+
+
+Mode <- function(x) {
+  ux <- unique(x)
+  ux[which.max(tabulate(match(x, ux)))]
+}
+
+# function for good plot with blue plots
+plot_ag = function(...){
+  # Input: x,y, .... 
+  #          where input are parameters for the plot and ... implies you can pass multiple parameter for the plot fuction
+  #output: return the plot of the input with defined color and plotting style
+  
+  plot(col = "dodgerblue", pch = 20, cex =1.5,...)
+}
+
+# calculating rsq values
+rsq.from.data = function(data.actual,data.predicted,...){
+  #input data.actual = real values from the dataset
+  #      data.predicted = predicted value from the model
+  #output: rsq.from.data = R^2 value from the two input parameters
+  
+  iii=0
+  SSR = 0
+  SSTO = 0
+  for (iii in 1:length(data.actual)){
+    SSR = SSR + (data.actual[iii]-data.predicted[iii])^2
+    SSTO = SSTO + (data.actual[iii]-mean(data.actual))^2
+  }
+  
+  rsq.from.data = 1-(SSR/SSTO)
+  
+}
+
+# theme for plotting the ggplot2
+
+theme.ggplot2 = function(){
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))
+  
+}
+
+
+
+# calculaitng AUC
+auc.calc = function(probability.of.class,actual.class,...){
+  # input : probability.of.class = probability of class/value that classification is based on i.e. output of program
+  #       : actual.class = actual class of the values
+  #
+  # output : auc = Area under then curve for the ROC Curve
+
+  ## Making ROC and calcuaitng AUC 
+  pred = prediction(probability.of.class,actual.class)
+  roc =  performance(pred,"tpr","fpr")
+  auc = performance(pred,"auc")
+  auc = round(unlist(slot(auc,"y.values")),4)
+
+}
+
+#plotting the ROC curve and calcualting the AUC value
+plot.roc = function(probability.of.class,class.of.var,title.curve,...){
+  # input : probability.of.class = values use to sperate the class
+  #       : class.of.var = Class of the variable after seperating the class
+  #       : title.curve = title for curve
+  # output : plot of ROC curve with auc value
+  
+  pred = prediction(probability.of.class,class.of.var) # using prediction function from ROCR package
+  roc =  performance(pred,"tpr","fpr") # getting ROC values based on pred
+  
+  plot(roc, colorize = T,main = title.curve,...) # plot function from ROCR package
+  abline(a=0,b=1)
+  auc = performance(pred,"auc") # calculting AUC for the ROC curve
+  auc = round(unlist(slot(auc,"y.values")),2) # extracing the AUC value 
+  legend(0.6,0.2,auc,title = "AUC") # plotting the legend to the figure
+}
+
+# plotting mean perofmance of the model for classification problems
+plot.mean.performance = function(fpr.performance,tpr.performance,mean.performance,auc,
+                                 fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,scheme){
+  
+  # input : fpr.performance : matrix of false postive ration for each simulation and each fold
+  #       : tpr.performance : matrix of true postive ratio for each simulation and each fold
+  #       : mean.performance = matrix of performane for each simulation and each fold
+  #       : auc = auc for each simulation and each fold
+  # output: plot of correct prediction rate and auc for different simulations
+  
+  fpr.performance = stack(as.data.frame(fpr.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p1 = ggplot(data = fpr.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("False Positive Rate")+
+    ggtitle(paste0("False Positive Rate of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  tpr.performance = stack(as.data.frame(tpr.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p2 = ggplot(data = tpr.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("True Positive Rate")+
+    ggtitle(paste0("True Positive Rate of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  mean.performance = stack(as.data.frame(mean.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p3 = ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("Correct Prediction Rate")+
+    ggtitle(paste0("Performance of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  auc = stack(as.data.frame(auc)) # changing the matrix to dataframe and stacking the columns
+  
+  p4 = ggplot(data = auc,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("AUC")+
+    ggtitle(paste0("AUC of Test Set for  ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5,size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  # For training set
+  
+  fpr.performance.train = stack(as.data.frame(fpr.performance.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p5 = ggplot(data = fpr.performance.train,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("False Positive Rate")+
+    ggtitle(paste0("False Positive Rate of Train Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  tpr.performance.train = stack(as.data.frame(tpr.performance.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p6 = ggplot(data = tpr.performance.train,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("True Positive Rate")+
+    ggtitle(paste0("True Positive Rate of Train Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  mean.performance.train = stack(as.data.frame(mean.performance.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p7 = ggplot(data = mean.performance.train,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("Correct Prediction Rate")+
+    ggtitle(paste0("Performance of Train Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  auc.train = stack(as.data.frame(auc.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p8 = ggplot(data = auc.train,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("AUC")+
+    ggtitle(paste0("AUC of Test Set for  ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5,size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+
+  
+  
+  
+  # plotting all the data together 
+  fpr.performance$ind = "FPR Test"
+  tpr.performance$ind = "TPR Test"
+  mean.performance$ind = "Correct \n Test"  # combining all the values of each column to one
+  auc$ind = "AUC Test"
+  fpr.performance.train$ind = "FPR Train"
+  tpr.performance.train$ind = "TPR Train"
+  mean.performance.train$ind = "Correct \n Train"  # combining all the values of each column to one
+  auc.train$ind = "AUC Train"
+  
+  
+  
+  mean.performance =  rbind(fpr.performance,tpr.performance,mean.performance,auc,
+                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train)
+  mean.error = mean(mean.performance$values) # mean of the whole data mean performance
+  
+  
+  p9 = ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.05)+
+    xlab(" ")+ylab(" ")+
+    ggtitle(paste0("Performance of ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    guides(fill = "black")+
+    stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")
+  
+  return(list(p1,p2,p3,p4,p5,p6,p7,p8,p9))
+  
+}
+
+
+plot.mean.performance.old = function(fpr.performance,tpr.performance,mean.performance,auc, scheme){
+  
+  # input : fpr.performance : matrix of false postive ration for each simulation and each fold
+  #       : tpr.performance : matrix of true postive ratio for each simulation and each fold
+  #       : mean.performance = matrix of performane for each simulation and each fold
+  #       : auc = auc for each simulation and each fold
+  # output: plot of correct prediction rate and auc for different simulations
+  
+  fpr.performance = stack(as.data.frame(fpr.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p1 = ggplot(data = fpr.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("False Positive Rate")+
+    ggtitle(paste0("False Positive Rate of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  tpr.performance = stack(as.data.frame(tpr.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p2 = ggplot(data = tpr.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("True Positive Rate")+
+    ggtitle(paste0("True Positive Rate of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  mean.performance = stack(as.data.frame(mean.performance)) # changing the matrix to dataframe and stacking the columns
+  
+  p3 = ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("Correct Prediction Rate")+
+    ggtitle(paste0("Performance of Test Set for  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  auc = stack(as.data.frame(auc)) # changing the matrix to dataframe and stacking the columns
+  
+  p4 = ggplot(data = auc,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("AUC")+
+    ggtitle(paste0("AUC of Test Set for  ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5,size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+  
+  
+  
+  # plotting all the data together 
+  fpr.performance$ind = "FPR Test"
+  tpr.performance$ind = "TPR Test"
+  mean.performance$ind = "Correct \n Test"  # combining all the values of each column to one
+  auc$ind = "AUC Test"
+  
+  
+  
+  mean.performance =  rbind(fpr.performance,tpr.performance,mean.performance,auc)
+                            
+  mean.error = mean(mean.performance$values) # mean of the whole data mean performance
+  
+  
+  p5 = ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.05)+
+    xlab(" ")+ylab(" ")+
+    ggtitle(paste0("Performance of Test Set for ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    guides(fill = "black")+
+    stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")
+  
+  return(list(p1,p2,p3,p4,p5))
+  
+}
+
+# plotting mean perofmance of the model for regression problems
+plot.mean.performance.reg = function(rmse.train,rmse.test,rsq.train,rsq.test,scheme){
+  # input : rsq.train = matrix of rsq for training set for each simulation and each fold
+  #       : rsq.test = matrix of rsq for test set for each simulation and each fold
+  #       : rsmse.train = matrix of rmse for training set for each simulation and each fold
+  #       : rmse.test = matrix of rmse for test set for each simulation and each fold
+  # output: plot of correct prediction rate and auc for different simulations
+  
+  rmse.train = stack(as.data.frame(rmse.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p1 = ggplot(data = rmse.train, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T,outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("RMSE for train set")+
+    ggtitle(paste0("Train RMSE for different fold using  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    scale_y_continuous(limits = quantile(rmse.train$values, c(0.1, 0.9)))# plot of each fold and their correponding distribution of mean performance
+  
+  
+  rmse.test = stack(as.data.frame(rmse.test)) # changing the matrix to dataframe and stacking the columns
+  
+  p2 = ggplot(data = rmse.test, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("RMSE for test set")+
+    ggtitle(paste0("Test RMSE for different fold using  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    scale_y_continuous(limits = quantile(rmse.test$values, c(0.1, 0.9)))# plot of each fold and their correponding distribution of mean performance
+  
+  
+  rsq.train = stack(as.data.frame(rsq.train)) # changing the matrix to dataframe and stacking the columns
+  
+  p3 = ggplot(data = rsq.train, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("R^2 for train set")+
+    ggtitle(paste0("Train R^2 for different folds using  ",scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold")) +
+    ylim(c(0,1))# plot of each fold and their correponding distribution of mean performance
+  
+  
+  rsq.test = stack(as.data.frame(rsq.test)) # changing the matrix to dataframe and stacking the columns
+  
+  p4 = ggplot(data = rsq.test, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.2)+
+    xlab("Folds")+ylab("R^2 for test set")+
+    ggtitle(paste0("Test R^2 for different fold using  ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5,size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    ylim(c(0,1))# plot of each fold and their correponding distribution of mean performance
+  
+  
+  # plotting all the data together # combining all the values of each column to one
+  rmse.train$ind = "RMSE train"
+  rmse.test$ind = "RMSE test"
+  rsq.train$ind = "R^2 train"
+  rsq.test$ind = "R^2 test"
+  mean.performance.rmse =  rbind(rmse.train,rmse.test)
+  
+  
+  
+  p5 = ggplot(data = mean.performance.rmse, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.05)+
+    xlab(" ")+ylab("psi")+
+    ggtitle(paste0("Performance of RMSE for ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    guides(fill = "black")+
+    stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")+
+    scale_y_continuous(limits = quantile(mean.performance.rmse$values, c(0.1, 0.9)))
+  
+  mean.performance.rsq =  rbind(rsq.train,rsq.test)
+  
+  p6 = ggplot(data = mean.performance.rsq, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.05)+
+    xlab(" ")+ylab(" ")+
+    ggtitle(paste0("Performance of R^2 for ", scheme))+
+    theme(plot.title = element_text(hjust = 0.5, size = 12, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    guides(fill = "black")+
+    stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")+
+    scale_y_continuous(limits = quantile(mean.performance.rsq$values, c(0.1, 0.9)), breaks = )
+  
+  
+  
+  
+  return(list(p1,p2,p3,p4,p5,p6))
+  
+}
+
+# plot.hist.pdf = function(input.data.frame){
+#   bin.num = round(1+3.3*log10(length(input.data.frame)),0)
+#   ggplot(data = input.data.frame, aes(x = input.data.frame$values))+
+#   geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bin.num)+
+#   stat_function(fun = function(x) dnorm(x, 
+#                                         mean = mean(input.data.frame$values), 
+#                                         sd = sd(input.data.frame$values)),
+#                 color = "darkred", size = 1)+
+#   #geom_density(color = "blue", size = 0.5)+
+#   theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+#         axis.title.x = element_text(size = 10, face = "bold"),
+#         axis.title.y = element_text(size = 10, face = "bold"))+
+#   scale_x_continuous(limits =c(0.8*min(input.data.frame$values),1.2*max(input.data.frame$values)))+
+#   xlab("UCS (psi)")+ ylab("PDF Value")+
+#   ggtitle("RDH and Normal PDF for UCS ")  
+#   
+#   
+#   
+#   
+# }
+
+
+
+
+# Simulation of model performance for linear Models
+simulation.reg = function(formula.lm, dataset,title){
+  # input : formula.lm = formula for linear model
+  #       : dataset = data for using in the model
+  # output: run simulations
+  
+  simul = 100 # number of simulations
+  jj = 1
+  k = 5 # number of folds of sample
+  val.RMSE.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.rsq.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.rsq.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  
+  for (jj in 1:simul) {
+    ii= 1
+    #set.seed(10)
+    fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+      lin.fit = lm(formula.lm,data = train)   
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      
+      val.RMSE.train[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold!=ii]-lm.pred.train)^2))
+      val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      
+      val.rsq.train[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold!= ii],lm.pred.train)
+      val.rsq.test[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold == ii],lm.pred.test)
+      
+    }
+  }
+  
+  
+  # plotting the results using plot.mean.performance function
+  for(mm in 1:6){
+    plot(plot.mean.performance.reg(val.RMSE.train, val.RMSE.test, val.rsq.train,val.rsq.test, title)[[mm]])
+  }
+
+}
+
+# Simulation for smoothing splines
+simulation.ss = function(tunning.parameter, dataset){
+  # input : formula.lm = formula for linear model
+  #       : dataset = data for using in the model
+  # output: run simulations
+  attach(dataset)
+  df.s = tunning.parameter
+  simul = 100 # number of simulations
+  jj = 1
+  k = 5 # number of folds of sample
+  val.RMSE.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.rsq.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  val.rsq.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+  
+  for (jj in 1:simul) {
+    ii= 1
+    #set.seed(10)
+    fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+      
+      lin.fit = gam(UCS.psi~ s(LL, df = df.s)+s(PL, df = df.s)+s(Clay, df = df.s)+s(Sand, df = df.s)+Lime+Cement+Asphalt, data = train)
+       
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      
+      val.RMSE.train[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold!=ii]-lm.pred.train)^2))
+      val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      
+      val.rsq.train[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold!= ii],lm.pred.train)
+      val.rsq.test[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold == ii],lm.pred.test)
+      
+    }
+  }
+  
+  # plotting the results using plot.mean.performance function
+  for(mm in 1:6){
+    plot(plot.mean.performance.reg(val.RMSE.train, val.RMSE.test, val.rsq.train,val.rsq.test, "Smoothing Splines")[[mm]])
+  }
+  
+}  
+
+# simulation for finding optimum value of the tuning parameter
+simulation.tuning.ss = function(tunning.parameter,dataset){
+  df.s = tunning.parameter
+  simul = 100 # number of simulations
+  jj = 1
+  k = 5 # number of folds of sample
+  val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+    for (jj in 1:simul) {
+    ii= 1
+    #set.seed(10)
+    fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+      
+      lin.fit = gam(UCS.psi~ s(LL, df = df.s)+s(PL, df = df.s)+s(Clay, df = df.s)+s(Sand, df = df.s)+Lime+Cement+Asphalt, data = train)
+      
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      
+    }
+  }
+  val.RMSE.test = round(val.RMSE.test,0)
+  return(median(val.RMSE.test))
+  
+  
+}
+
+# simulation for finding optimum value of the tuning parameter
+simulation.tuning.ns = function(tunning.parameter,dataset){
+  df.ns = tunning.parameter
+  simul = 100 # number of simulations
+  jj = 1
+  k = 5 # number of folds of sample
+  val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+    for (jj in 1:simul) {
+    ii= 1
+    #set.seed(10)
+    fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+    
+      lin.fit = lm(UCS.psi~ns(LL,df = df.ns)+ns(PL, df = df.ns)+ns(Clay, df = df.ns)+ns(Sand, df = df.ns)+Lime+Cement+Asphalt, data = train)
+      
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      
+    }
+  }
+  val.RMSE.test = round(val.RMSE.test,0)
+  return(Mode(val.RMSE.test))
+  
+  
+}
+
+```
+```{r function_predict_regsubset, JUNKKKKKKKK}
+# not used need to revise
+predict.regsubsets = function(form,object,newdata,id,...){
+#form = as.formula(object$call[[2]])
+mat = model.matrix(form,newdata)
+coefi = coefficients(object,id = id)
+xvars = names(coefi)
+mat[,xvars]%*% coefi # output of the function
+
+}
+```
+# Describing Dataset
+The second step to the plot the data and see its characteristics. For this, I am using **ggplot2** library.
+
+## Summary of Variables
+Summary of the data taken from Burrogh (2001) is given below.
+
+```{r Summary_of_Variables}
+#summary(raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",])
+
+summary(raw.data.allsoil)
+
+```
+
+## Plot for UCS strength with other predictor variables
+
+Various parameters are plotted against UCS strength.
+
+```{r fig.align='center', fig.height=12, fig.width=10, fig.cap="Scatter plot for Individual Predictor Variables with UCS"}
+attach(raw.data.allsoil)
+# UCS vs Fines
+plot1 = ggplot(data = raw.data.allsoil, aes(x = Clay, y =UCS.psi ))+
+  geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = NULL))+ 
+  xlab("% Clay/Silt")+ylab("UCS Strength (psi)")
+
+# UCS vs Sand
+plot2 = ggplot(data = raw.data.allsoil, aes(x = Sand, y =UCS.psi))+
+  geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = "% Cement"))+
+  xlab("% Sand")+ylab("UCS Strength (psi)")
+
+# UCS vs Gravel
+plot3 = ggplot(data = raw.data.allsoil, aes(x = Gravel, y =UCS.psi))+
+ geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+ guides(fill = guide_legend(title = "% Cement"))+
+  xlab("% Gravel")+ylab("UCS Strength (psi)")
+
+# UCS vs LL
+plot4 = ggplot(data = raw.data.allsoil, aes(x = LL, y =UCS.psi))+
+ geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = "% Cement"))+
+  xlab("Liquid Limit")+ylab("UCS Strength (psi)")
+
+# UCS vs PL 
+plot5 = ggplot(data = raw.data.allsoil, aes(x = PL, y =UCS.psi))+
+  geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = "% Cement"))+
+  xlab("Plastic Limit")+ylab("UCS Strength (psi)")
+
+# UCS vs PI 
+plot6 = ggplot(data = raw.data.allsoil, aes(x = PI, y =UCS.psi))+
+  geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = "% Cement"))+
+  xlab("Plasticity Index")+ylab("UCS Strength (psi)")
+
+# UCS vs Mositure Content 
+plot7 = ggplot(data = raw.data.allsoil, aes(x = `Linear Shrinkage (LS)`, y =UCS.psi ))+
+  geom_point()+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  guides(fill = guide_legend(title = "% Cement"))+
+  xlab("Linear Shrinkage")+ylab("UCS Strength (psi)")
+
+multiplot(plot1,plot2,plot3,plot4,plot5,plot6,plot7,cols = 2)  
+  
+```
+
+```{r fig.align='center', fig.height=3.5, fig.width=3.5, for_all_the_data}
+
+attach(raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])
+
+shapiro.test(Sand)
+shapiro.test(UCS.psi)
+
+
+# For % Clay
+
+ggplot(data = raw.data.allsoil, aes(x = raw.data.allsoil$Clay))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = 10)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$Clay), 
+                                        sd = sd(raw.data.allsoil$Clay)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(raw.data.allsoil$Clay)),breaks = seq(0,100,10))+
+  xlab("LL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Clay")
+  
+
+# For % LL
+
+ggplot(data = raw.data.allsoil, aes(x = raw.data.allsoil$LL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = 10)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$LL), 
+                                        sd = sd(raw.data.allsoil$LL)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(raw.data.allsoil$LL)),breaks = seq(0,100,10))+
+  xlab("LL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for LL")
+    
+
+# For % PL
+
+binwidth = 2.5
+ggplot(data = raw.data.allsoil, aes(x = raw.data.allsoil$PL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", binwidth = binwidth)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$PL), 
+                                        sd = sd(raw.data.allsoil$PL)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(raw.data.allsoil$PL)),breaks = seq(0,100,5))+
+  xlab("PL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for PL")
+    
+
+# For % Sand
+
+binwidth = 5
+ggplot(data = raw.data.allsoil, aes(x = raw.data.allsoil$Sand))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = 11)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$Sand), 
+                                        sd = sd(raw.data.allsoil$Sand)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(20,max(raw.data.allsoil$Sand)+10),breaks = seq(0,100,11))+
+  xlab("% Sand")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Sand")
+  
+# For % UCS 
+binwidth = 50
+ggplot(data = raw.data.allsoil, aes(x = raw.data.allsoil$UCS.psi))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = 11)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$UCS.psi), 
+                                        sd = sd(raw.data.allsoil$UCS.psi)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(40,850),breaks = seq(50,850,100))+
+  xlab("UCS (psi)")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for UCS ")  
+
+```
+
+
+```{r fig.align='center', fig.height=3.5, fig.width=3.5, for_pass_data}
+bins.opt = ceiling(1+3.3*log10(sum(raw.data.allsoil$UCS.code =="Pass")))
+attach(raw.data.allsoil)
+# For % Clay
+
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",], aes(x = Clay))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = 8)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(Clay), 
+                                        sd = sd(Clay)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(Clay)),breaks = seq(0,100,10))+
+  xlab("%Clay&Silt")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Clay")
+  
+
+# For % LL
+
+binwidth = 5
+ggplot(data =raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",], aes(x = LL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(LL), 
+                                        sd = sd(LL)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(LL)),breaks = seq(0,100,10))+
+  xlab("LL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for LL")
+    
+
+# For % PL
+
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",], aes(x = PL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins =  bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$PL), 
+                                        sd = sd(raw.data.allsoil$PL)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(raw.data.allsoil$PL)),breaks = seq(0,100,5))+
+  xlab("PL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for PL")
+    
+
+# For % Sand
+
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",], aes(x = Sand))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(Sand), 
+                                        sd = sd(Sand)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(20,max(Sand)+10),breaks = seq(0,100,11))+
+  xlab("% Sand")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Sand")
+  
+# For % UCS 
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",], aes(x = UCS.psi))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(UCS.psi), 
+                                        sd = sd(UCS.psi)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(40,850),breaks = seq(50,850,100))+
+  xlab("UCS (psi)")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for UCS ")  
+
+```
+
+```{r fig.align='center', fig.height=3.5, fig.width=3.5, for_fail_data}
+bins.opt = round(1+3.3*log10(sum(raw.data.allsoil$UCS.code =="Fail")),0)
+attach(raw.data.allsoil)
+# For % Clay
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = Clay))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(Clay), 
+                                        sd = sd(Clay)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(Clay)),breaks = seq(0,100,10))+
+  xlab("%Clay&Silt")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Clay")
+  
+
+# For % LL
+
+
+ggplot(data =raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = LL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(LL), 
+                                        sd = sd(LL)),
+                color = "darkred", size = 1)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(LL)),breaks = seq(0,100,10))+
+  xlab("LL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for LL")
+    
+
+# For % PL
+
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = PL))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins =  bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(raw.data.allsoil$PL), 
+                                        sd = sd(raw.data.allsoil$PL)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits =c(0,max(raw.data.allsoil$PL)),breaks = seq(0,100,5))+
+  xlab("PL")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for PL")
+    
+
+# For % Sand
+
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = Sand))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(Sand), 
+                                        sd = sd(Sand)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(20,max(Sand)+10),breaks = seq(0,100,11))+
+  xlab("% Sand")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for Sand")
+  
+# For % UCS 
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = UCS.psi))+
+  geom_histogram(aes(y = ..density.. ),alpha = 0.25, fill = "cornflowerblue", colour = "black", bins = bins.opt)+
+  stat_function(fun = function(x) dnorm(x, 
+                                        mean = mean(UCS.psi), 
+                                        sd = sd(UCS.psi)),
+                color = "darkred", size = 1)+
+  #geom_density(color = "blue", size = 0.5)+
+  theme.ggplot2()+
+  scale_x_continuous(limits =c(40,850),breaks = seq(50,850,100))+
+  xlab("UCS (psi)")+ ylab("PDF Value")+
+  ggtitle("RDH and Normal PDF for UCS ")  
+
+```
+
+
+
+```{r plot for lime,cement,asphalt , fig.width= 2.5, fig.height= 3}
+#binwidth = 50
+ggplot(data = raw.data.allsoil)+
+  geom_bar(aes(x = raw.data.allsoil$Lime), fill = "cornflowerblue", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,150),breaks = seq(0,125,25))+
+  xlab("Percentage of Lime")+ ylab("No. of samples")
+
+ggplot(data = raw.data.allsoil)+
+  geom_bar(aes(x = raw.data.allsoil$Cement), fill = "brown4", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,150),breaks = seq(0,125,25))+
+  xlab("Percentage of Cement")
+  
+ggplot(data = raw.data.allsoil)+
+  geom_bar(aes(x = raw.data.allsoil$Asphalt), fill = "grey34", colour = "black", alpha = 0.5, width = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,150),breaks = seq(0,125,25))+
+  xlab("Percentage of Asphalt")
+   
+  
+```
+
+```{r plot for lime,cement,asphalt, fig.width= 2.5, fig.height= 3}
+
+#binwidth = 50
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])+
+  geom_bar(aes(x = Lime), fill = "cornflowerblue", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,50),breaks = seq(0,125,25))+
+  xlab("Percentage of Lime")+ ylab("No. of samples")
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])+
+  geom_bar(aes(x = Cement), fill = "brown4", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,50),breaks = seq(0,125,25))+
+  xlab("Percentage of Cement")
+  
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])+
+  geom_bar(aes(x = Asphalt), fill = "grey34", colour = "black", alpha = 0.5, width = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,50),breaks = seq(0,125,25))+
+  xlab("Percentage of Asphalt")
+   
+  
+```
+
+```{r plot for lime,cement,asphalt, fig.width= 2.5, fig.height= 3}
+
+#binwidth = 50
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",])+
+  geom_bar(aes(x = Lime), fill = "cornflowerblue", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,100),breaks = seq(0,125,25))+
+  xlab("Percentage of Lime")+ ylab("No. of samples")
+
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",])+
+  geom_bar(aes(x = Cement), fill = "brown4", colour = "black", alpha = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,100),breaks = seq(0,125,25))+
+  xlab("Percentage of Cement")
+  
+ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",])+
+  geom_bar(aes(x = Asphalt), fill = "grey34", colour = "black", alpha = 0.5, width = 0.5)+
+  scale_x_discrete(limits =c(0,1,2,3,4,5,6))+theme.ggplot2()+
+  scale_y_continuous(limits =c(0,100),breaks = seq(0,125,25))+
+  xlab("Percentage of Asphalt")
+   
+  
+```
+
+## Scatter Matrix Plot
+A matrix plot for relationship between different variables were done using **plotly** and **ggplot2** plotting library by the use of **GGally**. In this case, a subset of the whole data frame was made which included % of fines, % of Sand, % of gravel, liquid limit, plastic limit, plasticity index,moisture content, UCS strength and Dry Density.
+
+```{r fig.align='center', fig.height=12, fig.width=10, fig.cap="Scatter plot matrix", eval=FALSE}
+
+sc.plot.data = subset.data.frame(raw.data.allsoil, select = c("LL","PL","PI","Linear Shrinkage (LS)")) # selecting on the predictor variables that use for plotting
+sc.plot = GGally::ggpairs(sc.plot.data, cardinality_threshold = 33, title = "Correlation between various parameters")
+ggplotly(sc.plot)
+
+```
+
+## Variation of strength with different treatment percentage
+Treated strength of 300psi was chosen as the break between subgrade type material and Base type material. 
+```{r fig.align='center', fig.height=6, fig.width=10, fig.cap="Box plot for variation UCS for treatment type", eval=FALSE}
+
+ggplot(data = raw.data.allsoil,aes(x = as.factor(UCS.code),y = UCS.psi))+
+  geom_boxplot(notch = TRUE)+#scale_fill_hue(l=40, c = 35)+
+  geom_point(aes(size = LL, alpha  = .2, color = Clay))+
+  scale_size_continuous(range = c(0.5,5))+
+  scale_color_gradient(low="blue", high="red")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  #scale_x_continuous(limits = c(200,800),breaks = seq(200,800,by = 100))
+  ggtitle("Variation of UCS strength with Chemical Stabilization")+xlab("Type of Material")+ylab("UCS Strength (psi)")
+
+```
+
+
+# Regression
+## Multiple Linear Regression
+In selection of linear regression model, some of the predictor that can be outright said to have correlation were not included in the model. This includes % of gravel (while % clay and % sand were used), PI ( while LL and PL were used).
+
+```{r Linear_Model}
+sc.plot.data = raw.data.allsoil # assiging the dataframe for plotting the dataset
+paste("Predictor Varibles")
+names(sc.plot.data) # printing the name of the variables
+attach(sc.plot.data) # attaching the data frame to the environment
+
+####################################################################
+form_5par = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt)# formula used for linear regression
+####################################################################
+
+# Multiple Linear Regression Model with 
+fit1 = lm(data = sc.plot.data,form_5par) # suspected variable with co-relation are removed 
+summary(fit1) # summary of the fiited model
+paste("Summary stastistics for Residuals")
+paste("Skweness = ", skewness(fit1$residuals))
+paste("Kurtosis = ",kurtosis(fit1$residuals))
+paste("Variance = ", var(fit1$residuals))
+
+rsq = summary(fit1)
+rsq.values = round(rsq$r.squared,2)
+ 
+par(mfrow = c(2,2))
+plot_ag(fit1)
+
+par(mfrow = c(1,1))
+hist(fit1$residuals, main = "Histogram for MLR Model")
+plot_ag(fit1$fitted.values,fit1$residuals, main = "Fitted value vs Residual Plot for MLR")
+
+### plot of Predicted vs Actual value using ggplot for better visualization
+sc.plot.data.fit1 = sc.plot.data
+sc.plot.data.fit1$fitted5par = fit1$fitted.values
+
+ggplot(data = sc.plot.data.fit1, aes(x = fitted5par, y = UCS.psi))+
+  geom_point(aes(col = Clay,size = LL), alpha = 0.5)+
+  scale_size(range = c(1,6))+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  scale_color_gradient(low="blue", high="red")+
+  xlim(c(100,800))+ ylim(c(100,800))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Predicted VS Actual UCS values - Linear Model")+
+  xlab("Predicted UCS values")+ ylab("Actual UCS values")+
+  annotate("text", x = 750 , y = 200, label = "R^2 == 0.26" , parse = TRUE)
+
+```
+
+For linear model, five predictors in MLR were used in addition to an interaction term between combination of all terms until the model had no significant term. The significant interaction terms were used in the model.
+
+```{r Linear_model_with_interaction_terms}
+# fit a simple linear model with interaction between plastic limit and liquid limit
+par(mfrow = c(1,1))
+
+form_intpar = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt) # defining formula
+fit2_all_int = lm(data = sc.plot.data,form_intpar ) # putting all the terms in the interaction terms.
+summary(fit2_all_int) # summary of the fiited model
+
+paste("Skweness = ",skewness(fit2_all_int$residuals))
+paste("Kurtosis = ",kurtosis(fit2_all_int$residuals))
+paste("Variance = ", var(fit2_all_int$residuals))
+
+#par(mfrow = c(2,2))
+plot_ag(fit2_all_int)
+
+par(mfrow = c(1,1))
+hist(fit2_all_int$residuals, main = "Histogram for MLR Model with interaction terms ")
+plot_ag(fit2_all_int$fitted.values,fit2_all_int$residuals, main = "Fitted value vs Residual Plot for MLR with interaction model")
+
+
+# plot_ag(fit1$fitted.values,UCS..psi., main = "Predicted vs Actual UCS strength Plot for MLR using 5 parameters",
+#         xlim = c(200,800),ylim =c (200,800),
+#         xlab = "Predicted UCS values", ylab = "Actual UCS Values")
+# abline(a = 0 , b = 1)
+
+### plot using ggplot for better visualization
+sc.plot.data.fit2_all_int = sc.plot.data
+sc.plot.data.fit2_all_int$fittedintpar = fit2_all_int$fitted.values
+
+ggplot(data = sc.plot.data.fit2_all_int, aes(x = fittedintpar, y = UCS.psi))+
+  geom_point(aes(size = LL, col = Clay), alpha = 0.65)+
+  scale_color_gradient(low="blue", high="red")+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  xlim(c(100,800))+ ylim(c(100,800))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Linear Model with interaction between LL and PL")+
+  xlab("Predicted UCS values")+ ylab("Actual UCS values")+
+  annotate("text", x = 750 , y = 200, label = "R^2 == 0.28" , parse = TRUE)
+
+
+paste0("VIF for each predictors")
+vif(lm(data = sc.plot.data,form_intpar ))
+```
+
+The initial linear model with 5 predictors were used with ratio of sand/clay added as a new parameter.
+
+```{r interaction_terms_CLAY/SAND}
+# fit a simple linear model with interaction between plastic limit and liquid limit
+par(mfrow = c(1,1))
+form_intpar = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt+I(Clay/Sand))
+fit2_all_int = lm(data = sc.plot.data,form_intpar ) # putting all the terms in the interaction terms.
+summary(fit2_all_int) # summary of the fiited model
+
+paste("Skweness = ",skewness(fit2_all_int$residuals))
+paste("Kurtosis = ",kurtosis(fit2_all_int$residuals))
+paste("Variance = ", var(fit2_all_int$residuals))
+
+par(mfrow = c(2,2))
+plot_ag(fit2_all_int)
+
+par(mfrow = c(1,1))
+hist(fit2_all_int$residuals, main = "Histogram for MLR Model with interaction terms ")
+plot_ag(fit2_all_int$fitted.values,fit2_all_int$residuals, main = "Fitted value vs Residual Plot for MLR with interaction model")
+
+### plot using ggplot for better visualization
+sc.plot.data.fit2_all_int = sc.plot.data
+sc.plot.data.fit2_all_int$fittedintpar = fit2_all_int$fitted.values
+
+ggplot(data = sc.plot.data.fit2_all_int, aes(x = fittedintpar, y = UCS.psi))+
+  geom_point(aes(size = LL, col = Clay), alpha = 0.5)+
+  scale_color_gradient(low="blue", high="red")+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  xlim(c(100,800))+  ylim(c(100,800))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Predicted VS Actual UCS values - Linear Model")+
+  xlab("Predicted UCS values")+ ylab("Actual UCS values")+
+  annotate("text", x = 750 , y = 200, label = "R^2 == 0.285" , parse = TRUE)
+
+
+```
+
+Resamplng using Cross Validation
+
+```{r resampling_CV_MCMC_with_interaction_Sand/Clay_ratio, fig.width=5, fig.height=3}
+attach(raw.data.allsoil)
+#formula.cv = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt+LL:PL+I(Clay/Sand))
+formula.cv = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt)
+simulation.reg(formula.lm = formula.cv, dataset = raw.data.allsoil, title = "MLR")
+```
+
+## Regularilzation of MLR
+
+Regularization reduces variance.
+```{r preparating dataset for computation}
+# using shrinkage that constrains or regularizes the coefficient estimates towards zero which significantly reduces variance
+# standardizing the parameters in before applying ridge regression
+
+formula.cv = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt+LL:PL+I(Clay/Sand))
+#formula.cv = as.formula(UCS.psi ~ LL:PL:Clay:Sand:Lime:Cement:Asphalt)
+
+x = model.matrix(formula.cv, data = raw.data.allsoil)[,-1] # taking the predictors from the formula ( by using model.matrix) and removing the intercept term
+y = raw.data.allsoil$UCS.psi
+formula.cv = as.formula(UCS.psi~LL+PL+Clay+Sand+Lime+Cement+Asphalt+LL:PL+I(Clay/Sand))
+grid = 10^seq(10,-2,length = 100)
+```
+
+### Using Ridge regression
+
+```{r evaluation_of_test_error_resampling}
+ridge.mod = glmnet(x,y,alpha = 0,lambda = grid) # running ridge regression to calculate different parameters
+#ridge.mod$lambda
+#coef(ridge.mod)
+
+# set.seed(1)
+ # train = sample(1:nrow(x), nrow(x)/2) # generating half the number of dataset with random numbers from 1 to length of row of x
+ # test = (-train) #
+ # y.test = y[test] #
+ # 
+ # ridge.mod = glmnet(x[train,],y[train],alpha = 0,lambda = grid, thresh = 1e-12)
+ # ridge.pred = predict(ridge.mod,s=4,newx = x[test,])
+ # ridge.pred = predict(ridge.mod,s=4,type = "coefficients")
+ # ridge.pred
+# mean((ridge.pred-y.test)^2)
+# 
+# CV to find best values of lambda
+cv.out = cv.glmnet(x,y,alpha =0) # using 5-fold CV to find out the best value of alpha
+# plot(cv.out)
+bestlam = cv.out$lambda.min # choosing the best value of lambda
+
+ # running simulations using best parameters
+
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+val.RMSE.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.rsq.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.rsq.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train.x = x[fold!=ii,] # creating a training sample for samples expect folding
+    train.y = y[fold!=ii]
+    test.x = x[fold==ii,]
+    test.y = y[fold==ii]
+    
+    ridge.mod = glmnet(train.x,train.y,alpha = 0,lambda = grid)
+    ridge.pred.train = predict(ridge.mod,s = bestlam,newx = train.x)
+    ridge.pred.test = predict(ridge.mod,s = bestlam,newx = test.x)
+    
+    
+    # lin.fit = lm(formula.cv,data = train)
+    # lm.pred.train = predict(lin.fit,newdata = train)
+    # lm.pred.test = predict(lin.fit,newdata = test)
+    
+    val.RMSE.train[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold!=ii]-ridge.pred.train)^2))
+    val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-ridge.pred.test)^2))
+    
+    val.rsq.train[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold!= ii],ridge.pred.train)
+    val.rsq.test[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold == ii],ridge.pred.test)
+    
+  }
+}
+
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:6){
+  plot(plot.mean.performance.reg(val.RMSE.train, val.RMSE.test, val.rsq.train,val.rsq.test, "MLR with Interaction")[[mm]])
+}
+
+
+
+
+```
+
+### Using Lasso
+
+``` {r evaluation_of_test_error_resampling_lasso}
+ridge.mod = glmnet(x,y,alpha = 1,lambda = grid) # running lasso to calculate different parameters
+#ridge.mod$lambda
+#coef(ridge.mod)
+
+# CV to find best values of lambda
+cv.out = cv.glmnet(x,y,alpha =1) # using 5-fold CV to find out the best value of alpha
+#plot(cv.out)
+bestlam = cv.out$lambda.min # choosing the best value of lambda
+
+# out = glmnet(x,y,alpha = 1,lambda = grid)
+# predict(out,type = "coefficients",s = bestlam)[1:10,]
+
+
+ # running simulations using best parameters
+
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+val.RMSE.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.RMSE.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.rsq.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+val.rsq.test = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train.x = x[fold!=ii,] # creating a training sample for samples expect folding
+    train.y = y[fold!=ii]
+    test.x = x[fold==ii,]
+    test.y = y[fold==ii]
+    
+    ridge.mod = glmnet(train.x,train.y,alpha = 1,lambda = grid)
+    ridge.pred.train = predict(ridge.mod,s = bestlam,newx = train.x)
+    ridge.pred.test = predict(ridge.mod,s = bestlam,newx = test.x)
+    
+    
+    # lin.fit = lm(formula.cv,data = train)
+    # lm.pred.train = predict(lin.fit,newdata = train)
+    # lm.pred.test = predict(lin.fit,newdata = test)
+    
+    val.RMSE.train[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold!=ii]-ridge.pred.train)^2))
+    val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-ridge.pred.test)^2))
+    
+    val.rsq.train[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold!= ii],ridge.pred.train)
+    val.rsq.test[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold == ii],ridge.pred.test)
+    
+  }
+}
+
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:6){
+  plot(plot.mean.performance.reg(val.RMSE.train, val.RMSE.test, val.rsq.train,val.rsq.test, "MLR with Interaction")[[mm]])
+}
+
+```
+
+## General Additive Model (GAM)
+### Natural Splines
+```{r  fig.width=4, fig.height=2.5}
+
+### Using natural splines
+df.ns = 6
+gam.ns.formula = as.formula(UCS.psi~ ns(LL, df = 6)+ns(PL, df = 6)+ns(Clay, df = 6)+ns(Sand, df = 6)+Lime+Cement+Asphalt)
+gam.ns = lm(gam.ns.formula, data = raw.data.allsoil) # Using Cubic Spline with 3 knots
+#par(mfrow =c(2,2))
+plot.Gam(gam.ns,se = T, col = "blue")
+summary(gam.ns)
+
+### Using MCMC
+simulation.reg(formula.lm = gam.ns.formula,dataset = raw.data.allsoil,title = "Natural Splines") # running 5 fold CV with the new model for 200 simulation of random division into test/train data
+
+
+```
+
+```{r fig.width=5, fig.height=3}
+# optimizing the df as the tunning parameter.
+# Mode of RMSE was used to decide on the tunning parameter with 5-fold CV
+
+df.ns = seq(1,8,1) # defining the range of degree of freedom
+RMSE = matrix(NA,length(df.ns),1) # predefining a matrix for storing mean performance
+for(ii in 1:length(df.ns)){
+  RMSE[ii] = simulation.tuning.ns(df.ns[ii],raw.data.allsoil)
+}
+plot(RMSE, type = "l")
+df.ns.optim=df.ns[which.min(RMSE)]
+
+# use the optimum values to get the prediction
+gam.ns.formula = as.formula(UCS.psi~ ns(LL, df = df.ns.optim)+ns(PL, df = df.ns.optim)+
+                              ns(Clay, df = df.ns.optim)+ns(Sand, df = df.ns.optim)+Lime+Cement+Asphalt) # writing the formula with optimum
+### Using MCMC
+simulation.reg(formula.lm = gam.ns.formula,dataset = raw.data.allsoil, title = "Natural Splines") # running 5 fold CV with the new model for 200 simulation of random division into test/train data
+
+```
+
+```{r}
+dataset  = raw.data.allsoil 
+df.s = seq(1,12,1)
+simul = 20 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+val.RMSE.test = matrix(NA,length(df.s),simul) # predefining a matrix for storing mean performance
+val.RMSE.test.ii = matrix(NA,5,1) # predefining a matrix for storing mean performance
+for (jj in 1:simul) {
+  
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+  for (kk in 1:length(df.s)) {
+    
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+      
+      lin.fit = gam(UCS.psi~ ns(LL, df = df.s[kk])+ns(PL, df = df.s[kk])+ns(Clay, df = df.s[kk])+ns(Sand, df = df.s[kk])+
+                      Lime+Cement+Asphalt, data = train)
+      
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      val.RMSE.test.ii[ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+    }
+    val.RMSE.test[kk,jj] = mean(val.RMSE.test.ii)
+  }
+}
+
+RMSE = apply(val.RMSE.test, 1, mean)
+std = apply(val.RMSE.test, 1, sd)
+
+
+#plot(RMSE)
+plot(df.s,RMSE, type = "l")
+lines(df.s, RMSE + 2*std, col = "blue")
+lines(df.s, RMSE - 2*std, col = "blue")
+points(df.s[which.min(RMSE)],min(RMSE), col = "green")
+
+```
+
+### Smoothing Splines
+```{r}
+### Using smoothing splines
+df.s = 10
+attach(raw.data.allsoil)
+rnd.samp = sample(1:5,nrow(raw.data.allsoil), replace = T)
+
+gam.s = gam(UCS.psi~ s(LL, df = df.s)+s(PL, df = df.s)+s(Clay, df = df.s)+s(Sand, df = df.s)+Lime+Cement+Asphalt, 
+            data = raw.data.allsoil[rnd.samp!=1,]) # 
+#par(mfrow =c(2,2))
+#plot(gam.s,se = T, col = "blue")
+predicted = predict(gam.s,newdata = raw.data.allsoil[rnd.samp==1,])
+
+c = rsq.from.data(data.actual = raw.data.allsoil[rnd.samp==1,]$UCS.psi, data.predicted = predicted )
+#c = rsq.from.data(data.actual = raw.data.allsoil[rnd.samp!=1,]$UCS.psi, data.predicted = gam.s$fitted.values )
+#plot(gam.s$residuals)
+#c = rsq.from.data(data.actual = gam.s$y, data.predicted = gam.s$fitted.values)
+plot(raw.data.allsoil[rnd.samp ==1,]$UCS.psi,predicted)
+abline(a=0,b=1, col = "red", lwd = 2)
+
+```
+
+```{r fig.width=5, fig.height=3}
+df.s = seq(24,28,1)
+#df.s = 16
+RMSE = matrix(NA,length(df.s),1) # predefining a matrix for storing mean performance
+for(ii in 1:length(df.s)){
+  RMSE[ii] = simulation.tuning.ss(df.s[ii],raw.data.allsoil)
+}
+plot(RMSE)
+
+plot(df.s,RMSE, type = "l")
+#df.s.optim=df.s[which.min(RMSE)]
+df.s.optim =10
+simulation.ss(df.s.optim,raw.data.allsoil)
+
+
+```
+
+```{r}
+dataset  = raw.data.allsoil 
+df.s = seq(10,40,1)
+simul = 30 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+val.RMSE.test = matrix(NA,length(df.s),simul) # predefining a matrix for storing mean performance
+val.RMSE.test.ii = matrix(NA,5,1) # predefining a matrix for storing mean performance
+for (jj in 1:simul) {
+  
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(dataset), replace = TRUE) # selecting random samples
+  for (kk in 1:length(df.s)) {
+    
+    for (ii in 1:k) {
+      train = dataset[fold!=ii,] # creating a training sample for samples expect folding
+      test = dataset[fold==ii,]# creating a test sample for samples 
+      
+      lin.fit = gam(UCS.psi~ s(LL, df = df.s[kk])+s(PL, df = df.s[kk])+s(Clay, df = df.s[kk])+s(Sand, df = df.s[kk])+
+                      Lime+Cement+Asphalt, data = train)
+      
+      lm.pred.train = predict(lin.fit,newdata = train)
+      lm.pred.test = predict(lin.fit,newdata = test)
+      val.RMSE.test.ii[ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      
+    }
+    val.RMSE.test[kk,jj] = mean(val.RMSE.test.ii)
+  }
+}
+
+RMSE = apply(val.RMSE.test, 1, mean)
+std = apply(val.RMSE.test, 1, sd)
+
+
+#plot(RMSE)
+plot(df.s,RMSE, type = "l")
+lines(df.s, RMSE + 2*std, col = "blue")
+lines(df.s, RMSE - 2*std, col = "blue")
+points(df.s[which.min(RMSE)],min(RMSE), col = "green")
+
+```
+
+
+
+```{r}
+
+x = seq(0,10*pi,0.1)
+y = jitter(100*sin(x), factor = 1, amount = 70)
+
+
+data.test = data.frame(x,y)
+df.s = 27
+gam.s = gam(y ~ s(x, df = df.s), data = data.test) # 
+predicted = predict(gam.s)
+
+#c = rsq.from.data(data.actual = data.test$y, data.predicted = predicted )
+#c = rsq.from.data(data.actual = raw.data.allsoil[rnd.samp!=1,]$UCS.psi, data.predicted = gam.s$fitted.values )
+#plot(gam.s$residuals)
+
+
+plot(x,y) # plotting the original jittered data
+lines(x,100*sin(x), col ="red", lwd = 3) # plotting the real dunction
+lines(x,predicted, col = "blue") # plotting the predicted 
+#legend("top",c("100xSin(x) Jittered Data" ," 100xSin(x)", "Smoothing Splines"))
+
+df.s = seq(1,100,1)
+rnd.samp = sample(1:5,nrow(data.test), replace = T)
+#df.s = 16
+RMSE = matrix(NA,length(df.s),5) # predefining a matrix for storing mean performance
+for(ii in 1:length(df.s)){
+  for (kk in 1:5) {
+    gam.s = gam(y ~ s(x, df = df.s[ii]), data = data.test[rnd.samp!=kk,])
+    predicted = predict(gam.s, newdata = data.test[rnd.samp==kk,] )
+    RMSE[ii,kk] = sqrt(mean((data.test$y[rnd.samp==kk]-predicted)^2))
+  }
+}
+RMSE = apply(RMSE, 1, mean)
+
+#plot(RMSE)
+plot(df.s,RMSE, type = "l")
+points(df.s[which.min(RMSE)],min(RMSE), col = "green")
+gam.s = gam(y ~ s(x, df = 21), data = data.test[rnd.samp!=1,])
+predicted = predict(gam.s, newdata = data.test[rnd.samp==1,] )
+ 
+plot(x,y) # plotting the original jittered data
+lines(x,100*sin(x), col ="red") # plotting the real dunction
+lines(x[rnd.samp==1] ,predicted, col = "blue") # plotting the predicted 
+
+
+```
+
+```{r}
+
+rnd.sample.test = function(df.s, no.of.simulation){
+  RMSE = matrix(NA,length(df.s),1) # predefining a matrix for storing mean performance
+  
+  for (jj in 1:no.of.simulation) {
+    rnd.samp = sample(1:5,nrow(data.test), replace = T)
+    gam.s = gam(y ~ s(x, df = df.s), data = data.test[rnd.samp!=1,])
+    predicted = predict(gam.s, newdata = data.test[rnd.samp==1,] )
+    RMSE[jj] = sqrt(mean((data.test$y[rnd.samp==1]-predicted)^2))
+  }
+  
+  return(median(RMSE)) # returns median RMSE for given number of simulations
+}
+
+RMSE = matrix(NA,length(df.s),1) # predefining a matrix for storing mean performance
+
+df.s = seq(1,100,1)
+for(ii in 1:length(df.s)){
+    RMSE[ii] = rnd.sample.test(df.s = df.s[ii],no.of.simulation =  200)
+}
+plot(df.s,RMSE, type = "l")
+
+```
+
+```{r}
+
+rnd.sample.test.1 = function(no.of.simulation, data){
+  data.test = data
+  df.s = seq(1,100,1)
+  RMSE.kk = matrix(NA,5,1) # predefining a matrix for storing mean performance
+  RMSE = matrix(NA,length(df.s),no.of.simulation) # predefining a matrix for storing mean performance
+  
+  for (jj in 1:no.of.simulation) {
+    rnd.samp = sample(1:5,nrow(data.test), replace = T)
+    ii=1
+    for(ii in 1:length(df.s)){
+      kk=1
+      for (kk in 1:5) {
+        gam.s = gam(y ~ s(x, df = df.s[ii]), data = data.test[rnd.samp!=kk,])
+        predicted = predict(gam.s, newdata = data.test[rnd.samp==kk,] )
+        RMSE.kk[kk] = sqrt(mean((data.test$y[rnd.samp==kk]-predicted)^2))
+      }
+      RMSE[ii,jj] = mean(RMSE.kk)
+    }
+    
+  }
+  
+  
+  RMSE = apply(RMSE, 1, mean)
+  return(RMSE) # returns median RMSE for given number of simulations
+}
+
+RMSE = rnd.sample.test.1(no.of.simulation =4, data = data.test)
+plot(df.s,RMSE, type = "l")
+
+
+
+```
+
+```{r}
+simulation.no = 3
+
+df.s = seq(1,100,1)
+RMSE.kk = matrix(NA,5,1) # predefining a matrix for storing mean performance
+RMSE = matrix(NA,length(df.s),simulation.no) # predefining a matrix for storing mean performance
+for (jj in 1:simulation.no) {
+  
+  rnd.samp = sample(1:5,nrow(data.test), replace = T)
+  
+  
+  for(ii in 1:length(df.s)){
+    for (kk in 1:5) {
+      gam.s = gam(y ~ s(x, df = df.s[ii]), data = data.test[rnd.samp!=kk,])
+      predicted = predict(gam.s, newdata = data.test[rnd.samp==kk,] )
+      RMSE.kk[kk] = sqrt(mean((data.test$y[rnd.samp==kk]-predicted)^2))
+    }
+    RMSE[ii,jj] = mean(RMSE.kk)
+  }
+  
+}
+
+RMSE = apply(RMSE, 1, mean)
+
+
+#plot(RMSE)
+plot(df.s,RMSE, type = "l")
+
+
+```
+
+
+### Local Regression
+
+```{r}
+span.lr  = 0.2
+gam.lr.formula = as.formula(UCS.psi~ lo(LL, span = span.lr)+lo(PL, span = span.lr)+
+                              lo(Clay, span = span.lr)+lo(Sand, span = span.lr)+Lime+Cement+Asphalt)
+
+gam.lr = gam(gam.lr.formula)
+ucs.pred = predict(gam.lr)
+
+plot(raw.data.allsoil$UCS.psi, ucs.pred)
+
+plot(gam.lr.formula)
+
+
+```
+
+```{r}
+### Using smoothing splines
+span.lr  = 0.5
+attach(raw.data.allsoil)
+rnd.samp = sample(1:5,nrow(raw.data.allsoil), replace = T)
+
+
+gam.lr = gam (UCS.psi~ lo(LL, span = span.lr)+lo(PL, span = span.lr)+
+                              lo(Clay, span = span.lr)+lo(Sand, span = span.lr)+Lime+Cement+Asphalt,
+              data = raw.data.allsoil[rnd.samp!=1,])
+
+predicted = predict(gam.lr,newdata = raw.data.allsoil[rnd.samp==1,])
+
+c.test = rsq.from.data(data.actual = raw.data.allsoil[rnd.samp==1,]$UCS.psi, data.predicted = predicted )
+c.train = rsq.from.data(data.actual = raw.data.allsoil[rnd.samp!=1,]$UCS.psi, data.predicted = gam.lr$fitted.values )
+#plot(gam.s$residuals)
+#c = rsq.from.data(data.actual = gam.s$y, data.predicted = gam.s$fitted.values)
+plot(raw.data.allsoil[rnd.samp ==1,]$UCS.psi,predicted)
+abline(a=0,b=1, col = "red", lwd = 2)
+
+
+```
+
+
+
+## Transformation
+A casual inspection of the data shows that homoscedasticity is likely to be an unrealistic assumption on the original scale, so our first step is use transformation of the data sets so that homoscedasticity can be be approximately assumed.
+
+### Boxcox tranformation for response variable
+
+Box & Cox suggest using the profile likelihood function for the *largest linear model to be considered* as a guide in choosing a value for Î», which will then remain fixed for any remaining analyses. Initially Aitkinâs choice of Î± = 1 was used for calculation of optimal values of Î» using log-likelihood.
+
+```{r tranformation_parameters}
+# tranformation model - MASS(boxcox)
+par(mfrow = c(1,2))
+
+# finding the value of optimum alpha using by maximizing log-likelyhood
+fit1_boxcox_alpha = logtrans(data = sc.plot.data,form_5par, alpha = seq(-100,500, len = 20))
+alpha_par = cbind.data.frame(fit1_boxcox_alpha$x,fit1_boxcox_alpha$y)
+alpha_par = arrange(alpha_par, desc(alpha_par$`fit1_boxcox_alpha$y`)); alpha_opt = alpha_par[1,1]
+
+# using the value of optimum alpha, lambda was calculated
+fit1_boxcox_lambda = boxcox(data = sc.plot.data ,form_5par )
+lamda_par = cbind.data.frame(fit1_boxcox_lambda$x,fit1_boxcox_lambda$y)
+lamda_par = arrange(lamda_par,desc(lamda_par$`fit1_boxcox_lambda$y`)) ; lamda_opt = round(lamda_par[1,1])
+```
+################### Change parameters #################################
+
+
+
+```{r optimum_boxcox_parameter}
+
+if(round(lamda_opt,2)==0){
+    sc.plot.data$UCS.psi.tranform = log(UCS.psi+alpha_opt)
+  fit1_tranformed = lm(data = sc.plot.data,log(UCS.psi+alpha_opt)~LL+PL+Clay+Sand+Lime+Cement+Asphalt)
+  
+} else {
+  sc.plot.data$UCS.psi.tranform = ((UCS.psi+alpha_opt)^lamda_opt-1)/lamda_opt
+  fit1_tranformed = lm(data = sc.plot.data,((UCS.psi+alpha_opt)^lamda_opt-1)/lamda_opt ~ LL+PL+Clay+Sand+Lime+Cement+Asphalt)
+
+}
+par(mfrow = c(2,2))
+plot_ag(fit1_tranformed)
+summary(fit1_tranformed)
+paste("Skweness = ",skewness(fit1_tranformed$residuals))
+paste("Kurtosis = ",kurtosis(fit1_tranformed$residuals))
+paste("Variance = ", var(fit1_tranformed$residuals))
+
+par(mfrow = c(2,2))
+plot_ag(fit1_tranformed)
+
+par(mfrow = c(1,1))
+hist(fit1_tranformed$residuals, main = "Histogram for MLR Model with Tranformation in Response ")
+plot_ag(fit1_tranformed$fitted.values,fit1_tranformed$residuals, main = "Fitted value vs Residual Plot for MLR with tranformation")
+
+
+# plot_ag(fit1$fitted.values,UCS..psi., main = "Predicted vs Actual UCS strength Plot for MLR using 5 parameters",
+#         xlim = c(200,800),ylim =c (200,800),
+#         xlab = "Predicted UCS values", ylab = "Actual UCS Values")
+# abline(a = 0 , b = 1)
+
+### plot using ggplot for better visualization
+sc.plot.data.fit1_transformed = sc.plot.data
+sc.plot.data.fit1_transformed$fittedintpar = fit1_tranformed$fitted.values
+
+ggplot(data = sc.plot.data.fit1_transformed, aes(x = fittedintpar, y = UCS.psi.tranform))+
+  geom_point(aes(size = PI, col = Clay))+
+  scale_color_gradient(low="blue", high="red")+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  xlim(c(5.5,6.5))+ylim(c(5.5,6.5))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Predicted VS Actual UCS values -  Tranformed Linear Model")+
+  xlab("Predicted Tranformed UCS values")+ ylab("Actual Tranformed UCS values")
+
+
+```
+
+### variance stabilizing tranformation for predictor
+
+In case of variance stabilizing transformation for predictors, polynomial functions were used. Polynomial which resulted the individual predictor's skewness of the residuals close to zero was chosen for MLR. We found that for LL polynomial of order 3 was optimal. Although raising the polynomial fit above 3 reduces the skweness towards zero, ANNOVA test with the higher power fit is shows that the newly added parameter is not significant.All the predictor went through the same process for determination of optimal polynomial. In case of Sand where none of the order of the variable greater than 1 is a significant parameter.In case of PL, polynomial of order 4 had 2 significant parameters. Therefore a linear model with all the updated parameters were made. The R^2^ value was highest among all linear fits.
+
+```{r individual polynomial plots, eval=FALSE}
+par(mfrow = c(2,3))
+
+fit_clay = lm(data = sc.plot.data, UCS..psi.~ Clay..)
+plot(fitted(fit_clay),residuals(fit_clay), col = "dodgerblue",
+     pch = 20, cex =1.5, main = "Model with Clay")
+paste("Skewness for Model with Clay",skewness(fit_clay$residuals))
+summary(fit_clay)
+
+fit_Sand = lm(data = sc.plot.data, UCS..psi.~ Sand..)
+plot(fitted(fit_Sand),residuals(fit_Sand), col = "dodgerblue",
+     pch = 20, cex =1.5, main = "Model with Sand")
+paste("Skewness for Model with Sand",skewness(fit_Sand$residuals))
+summary(fit_Sand)
+
+fit_LL = lm(data = sc.plot.data, UCS..psi.~ poly(LL...,3))
+plot(fitted(fit_LL),residuals(fit_LL), col = "dodgerblue",
+     pch = 20, cex =1.5, main = "Model with LL^3")
+paste("Skewness for Model with LL^3",skewness(fit_LL$residuals))
+summary(fit_LL)
+
+fit_PL = lm(data = sc.plot.data, UCS..psi.~ poly(PL...,4))
+plot(fitted(fit_PL),residuals(fit_PL), col = "dodgerblue",
+     pch = 20, cex =1.5, main = "Model with PL^4")
+paste("Skewness for Model with PL^4",skewness(fit_clay$residuals))
+summary(fit_PL)
+
+
+fit_Mositure = lm(data = sc.plot.data, UCS..psi.~ poly(Mositure..,4))
+plot(fitted(fit_Mositure),residuals(fit_Mositure), col = "dodgerblue",
+     pch = 20, cex =1.5, main = "Model with Moisture^4")
+paste("Skewness for Model with Moisture^4",skewness(fit_Mositure$residuals))
+summary(fit_Mositure)
+
+
+```
+
+All the parameters were not combined into single linear model.
+
+```{r fitting powered, eval=FALSE}
+paste("Combining all the tranformed predictors into single linear model")
+a <- as.formula(UCS..psi.~Clay..+Sand..+poly(LL...,3)+poly(PL...,4)+poly(Mositure..,4))
+
+fit1_poly_var =  lm(a)
+summary(fit1_poly_var)
+par(mfrow = c(2,2))
+plot_ag(fit1_poly_var)
+
+par(mfrow = c(1,1))
+plot_ag(fitted.values(fit1_poly_var), residuals(fit1_poly_var),main = " Residual Vs Fitted Values")
+
+paste("Skweness = ",skewness(fit1_poly_var$residuals))
+paste("Kurtosis = ",kurtosis(fit1_poly_var$residuals))
+paste("Variance = ", var(fit1_poly_var$residuals))
+
+paste("coefficient of MLR for combined model")
+coefficients(fit1_poly_var)
+
+par(mfrow = c(1,1))
+hist(fit1_poly_var$residuals, main = "Histogram for MLR Model with Tranformation in Predictors ")
+plot_ag(fit1_poly_var$fitted.values,fit1_poly_var$residuals, main = "Fitted value vs Residual Plot for MLR for transformed predictors")
+
+
+# plot_ag(fit1$fitted.values,UCS..psi., main = "Predicted vs Actual UCS strength Plot for MLR using 5 parameters",
+#         xlim = c(200,800),ylim =c (200,800),
+#         xlab = "Predicted UCS values", ylab = "Actual UCS Values")
+# abline(a = 0 , b = 1)
+
+### plot using ggplot for better visualization
+sc.plot.data.fit1_poly_var = sc.plot.data
+sc.plot.data.fit1_poly_var$fittedintpar = fit1_poly_var$fitted.values
+
+ggplot(data = sc.plot.data.fit1_poly_var, aes(x = fittedintpar, y = UCS..psi.))+
+  geom_point(aes(size = PI, col = Clay..))+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  xlim(c(100,800))+
+  ylim(c(100,800))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Predicted VS Actual UCS values -  Predictor Tranformed Linear Model")+
+  xlab("Predicted  UCS values")+ ylab("Actual UCS values")
+
+
+
+```
+
+
+## Best Subset selection
+Among the various predictors after polynomial transformation, best subset selection of the parameters were done. In doing so, exhaustive, forward and backward selection methods were used. Selection among the parameters were 
+
+
+```{r Best_Subset_Selection, eval=FALSE}
+#a <- as.formula(UCS..psi.~Clay..+Sand..+LL...+PL...+Mositure..+LL...:PL...) ; max_perdictor = 6
+a <- as.formula(UCS..psi.~Clay..+Sand..+poly(LL...,3)+poly(PL...,4)+poly(Mositure..,4));max_perdictor = 13
+#max_perdictor = 13
+#subset_type = c("exhaustive","forward","backward")
+subset_type = c("exhaustive")
+
+jj = 1
+
+for (jj in 1:1){
+  
+  best.subset.fit1 = regsubsets(a, data = sc.plot.data, 
+                                    nbest = 1,
+                                    nvmax = max_perdictor,
+                                    method = subset_type[jj]) # selecting subset of models
+  
+  sub_summary = summary(best.subset.fit1,all.best = T,matrix = T,matrix.logical = F)
+  #sub_summary
+  
+  #plot(best.subset.fit1)
+  no_variable = seq(1,max_perdictor,1)
+  subset_stats = cbind.data.frame(sub_summary$rsq,sub_summary$rss,sub_summary$adjr2,sub_summary$cp,sub_summary$bic,no_variable)
+  y_lab = c("r squared","RSS","Adjusted r squared","Mallow's Cp","BIC") # labeling axis for plotting
+  y_lab_act = c("r2","adjr2","Cp","bic")
+  i=1
+  optim_points_x =0
+  optim_points_y =0
+  # plotting all the Criteria for model selection
+  par(mfrow = c(1,1))
+  
+  par(mfrow = c(2,2))
+  for ( i in 3:5){
+    plot(no_variable,subset_stats[,i],
+         main = paste(y_lab[i]),
+         #main = paste(subset_type[jj]," ", y_lab[i]),
+         xlab = "Number of Variables",
+         ylab = y_lab[i],
+         type = "l")
+    if (i == 1 || i == 3) {
+      max_value = which.max(subset_stats[,i]) # give position of the maximum value
+      optim_points_x[i] = subset_stats[max_value,length(subset_stats)]
+      optim_points_y[i] = subset_stats[max_value,i]
+      points(subset_stats[max_value,length(subset_stats)],subset_stats[max_value,i], col = "red", cex = 2, pch = 20 )
+    }
+    else {
+      min_value = which.min(subset_stats[,i]) # give position of the minimum value
+      optim_points_x[i] = subset_stats[min_value,length(subset_stats)]
+      optim_points_y[i] = subset_stats[min_value,i]
+      points(subset_stats[min_value,length(subset_stats)],subset_stats[min_value,i], col = "red", cex = 2, pch = 20 )
+    }
+  }
+  par(mfrow = c(1,1))
+  i = 1
+  for( i in 1:4){
+    plot(best.subset.fit1, scale = y_lab_act[i], main = subset_type[jj])
+  }
+  # making dataframe for optimum parameters for each measuring parameter and 
+  
+  # i=3
+  # paste("Coefficients for ", y_lab[i], " using ", i, " parameters", " for", subset_type[jj], " Search Method")
+  # tempvar = paste("Coeff_adjr2_",subset_type[jj])
+  # assign(tempvar,as.data.frame(t(data.frame(coef(best.subset.fit1,optim_points_x[i])))))
+  # 
+  # i=4
+  # paste("Coefficients for ", y_lab[i], " using ", i, " parameters", " for", subset_type[jj], " Search Method")
+  # tempvar = paste("Coeff_cp_",subset_type[jj])
+  # assign(tempvar,as.data.frame(t(data.frame(coef(best.subset.fit1,optim_points_x[i])))))
+  # 
+  # i=5
+  # paste("Coefficients for ", y_lab[i], " using ", i, " parameters", " for", subset_type[jj], " Search Method")
+  # tempvar = paste("Coeff_bic_",subset_type[jj])
+  # assign(tempvar,as.data.frame(t(data.frame(coef(best.subset.fit1,optim_points_x[i])))))
+  
+  ############## extract coefficients for various best models
+  # i=1
+  # for (i in 3:5) {
+  #   #print(paste("Coefficients for ", y_lab[i], " using ", i, " parameters", " for", subset_type[jj], " Search Method"))
+  #   tempvar = paste("Coeff_",y_lab[i],"_",subset_type[jj])
+  #   assign(tempvar,as.data.frame(t(data.frame(coef(best.subset.fit1,optim_points_x[i])))))
+  #   print(paste("Coeff_",y_lab[i],"_",subset_type[jj]))
+  # }
+  
+  
+}  
+
+#coefficients(best.subset.fit1,8)
+
+```
+
+```{r, eval=FALSE}
+attach(sc.plot.data)
+	
+#using adjusted rsq in the model for best model
+
+fitbest_subset_exchaustive = lm (UCS..psi.~Clay..+LL...+I(LL...^2)+PL...+I(PL...^2)+I(PL...^4)+Mositure..+I(Mositure..^3))
+
+par(mfrow = c(1,1))
+hist(fitbest_subset_exchaustive$residuals, main = "Histogram for MLR Model with best Predictors ")
+plot_ag(fitbest_subset_exchaustive$fitted.values,fitbest_subset_exchaustive$residuals, main = "Fitted value vs Residual Plot for MLR for best predictors")
+
+
+# plot_ag(fit1$fitted.values,UCS..psi., main = "Predicted vs Actual UCS strength Plot for MLR using 5 parameters",
+#         xlim = c(200,800),ylim =c (200,800),
+#         xlab = "Predicted UCS values", ylab = "Actual UCS Values")
+# abline(a = 0 , b = 1)
+
+### plot using ggplot for better visualization
+sc.plot.data.fitbest_subset_exchaustive = sc.plot.data
+sc.plot.data.fitbest_subset_exchaustive$fittedintpar = fitbest_subset_exchaustive$fitted.values
+
+ggplot(data = sc.plot.data.fitbest_subset_exchaustive, aes(x = fittedintpar, y = UCS..psi.))+
+  geom_point(aes(size = PI, col = Clay..))+
+  theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+        legend.text = element_text(size = 12),
+        legend.title = element_text(hjust = 0.5, face = "bold"),
+        axis.title =element_text(hjust = 0.5, face = "bold") )+
+  xlim(c(100,800))+
+  ylim(c(100,800))+
+  geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+  ggtitle("Predicted VS Actual UCS values -  best predictor")+
+  xlab("Predicted  UCS values")+ ylab("Actual UCS values")
+summary(fitbest_subset_exchaustive)
+
+
+```
+
+```{r, eval=FALSE}
+model1 = 491.7469-3.733628*Clay..-340.1804*LL...+187.2653*I(LL...^2)+380.8003*PL...+246.6459*I(PL...^2)-450.9717*I(PL...^4)-376.2714*Mositure..+192.5552*I(Mositure..^3)
+
+plot(model1,UCS..psi.)
+
+
+```
+
+
+
+```{r Best_Subset_Selection_k_fold_cross_validation, eval=FALSE}
+
+simple.model = as.formula(UCS..psi.~Clay..+Sand..+LL...+PL...+Mositure..+LL...:PL...);max_perdictor = 6
+#simple.model = as.formula(UCS..psi.~Clay..+LL...+I(LL...^2)+PL...+I(PL...^2)+I(PL...^4)+Mositure..+I(Mositure..^3));max_perdictor = 8
+a = simple.model
+ii = 1
+MC_simul = 5
+k = 5
+set.seed(1)
+fold = sample(x = 1:k,size = nrow(sc.plot.data), replace = TRUE)
+val.RMSE = matrix(NA,k,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.RMSE.train = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.train= matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.test= matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+for (ii in 1:k) {
+  best.subset.fit1_cv = regsubsets(simple.model, data = sc.plot.data[fold!=ii,], # selecting the training data among k-fold cross-validation
+                                   nbest = 1,
+                                   nvmax = max_perdictor) # selecting subset of models
+  train.mat = model.matrix(simple.model,data =sc.plot.data[fold !=ii,] ) # Creating test matrix for 
+  test.mat = model.matrix(simple.model,data =sc.plot.data[fold ==ii,] ) # creating X matrix for remaining dataset i.e test set
+  
+  # running for loop for number of parameters selection criteria
+  jj=1
+  for (jj in 1:max_perdictor) {
+    coefj = coefficients(best.subset.fit1_cv, id = jj)
+    pred = test.mat[,names(coefj)]%*%coefj
+    pred.train = train.mat[,names(coefj)]%*%coefj
+    val.RMSE[ii,jj] = sqrt(mean((sc.plot.data$UCS..psi.[fold == ii]-pred)^2))
+    val.RMSE.train[ii,jj] = sqrt(mean((sc.plot.data$UCS..psi.[fold != ii]-pred.train)^2)) # selecting the training dataset and substracting it from its respective predicted value
+    val.rsq.train[ii,jj] = rsq.from.data(sc.plot.data$UCS..psi.[fold != ii],pred.train)
+    val.rsq.test[ii,jj] = rsq.from.data(sc.plot.data$UCS..psi.[fold == ii],pred)
+    }
+ 
+ 
+}
+
+mean.RMSE.test = apply(val.RMSE,2,mean)
+mean.RMSE.train = apply(val.RMSE.train,2,mean)
+mean.rsq.train = apply(val.rsq.train,2,mean)
+mean.rsq.test = apply(val.rsq.test,2,mean)
+
+
+par(mfrow = c(1,1))
+plot(mean.RMSE.error,type = 'b')
+plot(mean.rsq.test,type = 'b')
+coefficients(best.subset.fit1_cv,6)
+
+
+# all data points
+val.RMSE = stack(as.data.frame(val.RMSE))
+val.RMSE.train =stack(as.data.frame(val.RMSE.train))
+val.rsq.train = stack(as.data.frame(val.rsq.train))
+val.rsq.test = stack(as.data.frame(val.rsq.test))
+
+# mean points
+
+mean.RMSE.test = stack(as.data.frame(mean.RMSE.test));mean.RMSE.test[["No.of.Parameter"]]= seq(1,max_perdictor)
+mean.RMSE.train =stack(as.data.frame(mean.RMSE.train));mean.RMSE.train[["No.of.Parameter"]]= seq(1,max_perdictor)
+mean.rsq.train = stack(as.data.frame(mean.rsq.train));mean.rsq.train[["No.of.Parameter"]]= seq(1,max_perdictor)
+mean.rsq.test = stack(as.data.frame(mean.rsq.test));mean.rsq.test[["No.of.Parameter"]]= seq(1,max_perdictor)
+
+
+
+### plotting box plots using ggplot
+
+# RMSE Train
+plot1 = ggplot(data = val.RMSE.train)+
+  geom_boxplot(aes(x = ind, y = values),notch = F,fill='#A4A4A4', color="darkred")+
+  geom_point(aes(x = ind, y = values), col = "blue", size = 3, alpha = 0.5)+
+  # geom_point(data = mean.RMSE.train, aes(x = ind, y = values), col = "black", size = 5)+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  #geom_step(data = mean.RMSE.test,aes(x = ind, y = No.of.Parameter))+
+  ggtitle("Train Set")+xlab("No. of Parameters")+ylab("RMSE")
+
+# RMSE Test
+plot2 = ggplot(data = val.RMSE)+
+  geom_boxplot(aes(x = ind, y = values),notch = F,fill='#A4A4A4', color="darkred")+
+  geom_point(aes(x = ind, y = values), col = "blue", size = 3, alpha = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  ggtitle("Test Set")+xlab("No. of Parameters")+ylab("RMSE")
+
+# RSQ Train
+plot3 =ggplot(data = val.rsq.train)+
+  geom_boxplot(aes(x = ind, y = values),notch = F,fill='#A4A4A4', color="darkred")+
+  geom_point(aes(x = ind, y = values), col = "blue", size = 3, alpha = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  ggtitle("Train Set")+xlab("No. of Parameters")+ylab("R^2")
+
+
+
+# RSQ for test set
+plot4 = ggplot(data = val.rsq.test)+
+  geom_boxplot(aes(x = ind, y = values),notch = F,fill='#A4A4A4', color="darkred")+
+  geom_point(aes(x = ind, y = values), col = "blue", size = 3, alpha = 0.5)+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 12, face = "bold"),
+        axis.title.y = element_text(size = 12, face = "bold"))+
+  ggtitle("Test Set")+xlab("No. of Parameters")+ylab("R^2")
+
+# PLOTS USING BASE FUNCTIONS
+
+# boxplot(val.RMSE.train, main = "RMSE for Train Set", xlab = "No. of Parameters", ylab = "RMSE")
+# boxplot(val.RMSE, main = "RMSE for Test Set", xlab = "No. of Parameters", ylab = "RMSE")
+# boxplot(val.rsq.train, main = "R^2 Train",xlab = "No. of Parameters", ylab = "R2")
+# boxplot(val.rsq.test, main = "R^2 Test",xlab = "No. of Parameters", ylab = "R2")
+
+multiplot(plot1,plot2,plot3,plot4,cols = 2)
+
+############################################################################### 
+# using CaTools pakage
+# set.seed(ii) # to get similar random number everytime we run this command
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = .75)
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+#######################################################################
+
+
+
+
+
+
+```
+
+
+```{r Best_Subset_Selection_MCMC, warning=FALSE, eval=FALSE}
+#a = as.formula(UCS..psi.~Clay..+Sand..+LL...+PL...+Mositure..+LL...:PL...);max_perdictor = 6
+a <- as.formula(UCS..psi.~Clay..+Sand..+poly(LL...,3)+poly(PL...,4)+poly(Mositure..,4));max_perdictor = 13
+
+ii = 1
+MC_simul = 200
+splt_r = 0.70  # ratio of test set to training set
+#k = 5
+# set.seed(1)
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = splt_r) # select any column and split the whole dataset
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+val.error = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.error.train = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.train= matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.test= matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+save.predit = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+for (ii in 1:MC_simul) {
+  #set.seed(ii)
+  sample = sample.split(sc.plot.data$Sand.., SplitRatio = splt_r) # select any column and split the whole dataset
+  train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+  test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+  best.subset.fit1_cv = regsubsets(a, data = train, # selecting the training
+                                   nbest = 1,
+                                   nvmax = max_perdictor) # selecting subset of models
+  #val.rsq.train[ii,] = summary(best.subset.fit1_cv)$rsq
+  train.mat = model.matrix(a,data =train) # creating X matrix for remaining dataset i.e train dataset
+  test.mat = model.matrix(a,data =test) # creating X matrix for remaining dataset i.e train dataset
+  
+  # running for loop for number of parameters selection criteria
+  jj=1
+  for (jj in 1:max_perdictor) {
+    coefj = coefficients(best.subset.fit1_cv, id = jj)
+    pred.train = train.mat[,names(coefj)]%*%coefj
+    pred = test.mat[,names(coefj)]%*%coefj
+    val.error.train[ii,jj] = sqrt(mean((test$UCS..psi.-pred.train)^2))
+    val.error[ii,jj] = sqrt(mean((test$UCS..psi.-pred)^2))
+    val.rsq.train[ii,jj] = rsq.from.data(train$UCS..psi.,pred.train)
+    val.rsq.test[ii,jj] = rsq.from.data(test$UCS..psi.,pred)
+    #save.predit[ii,jj] = pred
+  }
+  
+}
+
+summary(best.subset.fit1_cv)
+
+
+boxplot(val.rsq.train, main = "R^2 Train")
+boxplot(val.rsq.test, main = "R^2 Test")
+boxplot(val.error.train, main = "RMSE Train")
+boxplot(val.error, main = "RMSE Test")
+mean.MC.error = apply(val.error,2,mean)
+par(mfrow = c(1,1))
+plot(mean.MC.error,type = 'b', main = "Mean Training RMSE",
+     xlab = "No. of Paramaters",
+     ylab = "RMSE")
+
+############################################################################### 
+# using CaTools pakage
+# set.seed(ii) # to get similar random number everytime we run this command
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = .75)
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+#######################################################################
+#coefficients(best.subset.fit1,9)
+
+
+```
+
+```{r Best_Subset_Selection_MCMC_Orginal Model, eval=FALSE}
+simple.model = as.formula(UCS..psi.~Clay..+Sand..+LL...+PL...+Mositure..+LL...:PL...)
+max_perdictor = 6
+ii = 1
+MC_simul = 100
+splt_r = 0.80  # ratio of test set to training set
+#k = 5
+# set.seed(1)
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = splt_r) # select any column and split the whole dataset
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+val.error = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.test = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.train = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+for (ii in 1:MC_simul) {
+  #set.seed(ii)
+  sample = sample.split(sc.plot.data$Sand.., SplitRatio = splt_r) # select any column and split the whole dataset
+  train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+  test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+  best.subset.fit1_cv = regsubsets(simple.model, data = train, # selecting the training
+                                   nbest = 1,
+                                   nvmax = max_perdictor) # selecting subset of models
+  test.mat = model.matrix(simple.model,data =test) # creating X matrix for remaining dataset i.e train dataset
+  val.rsq.train[ii,] = summary(best.subset.fit1_cv)$rsq
+  #val.rsq.train[ii,] = summary(best.subset.fit1_cv)$rss
+  # running for loop for number of parameters selection criteria
+  jj=1
+  for (jj in 1:max_perdictor) {
+    coefj = coefficients(best.subset.fit1_cv, id = jj)
+    pred = test.mat[,names(coefj)]%*%coefj
+    #val.rsq.test[ii,jj] = lm(UCS..psi.~ coefj, data = test)$rsq
+    val.error[ii,jj] = sqrt(mean((test$UCS..psi.-pred)^2))
+    #val.rsq.test[ii,jj] = rsq.from.data(test$UCS..psi.,pred)
+  }
+  
+  
+  
+  
+  
+}
+
+mean.MC.error = apply(val.error,2,mean)
+std.MC.error = apply(val.error,2,sd)
+par(mfrow = c(1,1))
+plot(mean.MC.error,type = 'b')
+plot(std.MC.error,type = 'b')
+
+boxplot(val.error,
+        main = "RMSE for training set")
+boxplot(val.rsq.train,
+        main = "R^2 for Training")
+# boxplot(val.rsq.test,
+#         main = "R^2 for Testing")
+############################################################################### 
+# using CaTools pakage
+# set.seed(ii) # to get similar random number everytime we run this command
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = .75)
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+#######################################################################
+coefficients(best.subset.fit1_cv,6)
+
+
+
+```
+
+
+```{r simple linear predict model, eval=F}
+max_perdictor = 6
+ii = 1
+MC_simul = 100
+splt_r = 0.70  # ratio of test set to training set
+#k = 5
+# set.seed(1)
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = splt_r) # select any column and split the whole dataset
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+val.error = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.test = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+val.rsq.train = matrix(NA,MC_simul,max_perdictor, dimnames = list(NULL,paste(1:max_perdictor)))
+for (ii in 1:MC_simul) {
+  #set.seed(ii)
+  sample = sample.split(sc.plot.data$Sand.., SplitRatio = splt_r) # select any column and split the whole dataset
+  train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+  test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+  best.subset.fit1_cv = lm(simple.model, data = train) # selecting the training
+  val.rsq.train[ii] = summary(best.subset.fit1_cv)$r.squared
+  pred = predict(best.subset.fit1_cv,data= test) 
+  val.error[ii] = sqrt(mean((test$UCS..psi.-pred)^2))
+  val.rsq.test[ii] = 
+  
+  
+}
+
+par(mfrow = c(1,1))
+
+boxplot(sc.plot.data$UCS..psi.,
+        main = "Error for testset")
+
+boxplot(val.error,
+        main = "Error for testset")
+
+boxplot(val.rsq.train,
+        main = "rsq train set")
+boxplot(val.rsq.test,
+        main = "rsq for testset")
+
+############################################################################### 
+# using CaTools pakage
+# set.seed(ii) # to get similar random number everytime we run this command
+# sample = sample.split(sc.plot.data$Clay.., SplitRatio = .75)
+# train = subset(sc.plot.data, sample == TRUE) # dataset afor training samples
+# test  = subset(sc.plot.data, sample == FALSE) # dataset for test samples
+#######################################################################
+
+
+
+
+```
+
+
+Outliers - unusual y for usual x -residual plot can be used to identify outliers/studentized residuals
+
+High leverage points - unusual x for normal y - leverage statistics
+
+Non-linear transformation of the plots
+- using non linear transformations like logX,sqrtX,x^2^
+
+check for correlation among the error terms in the model
+
+We need to take care of interactions between the variables.
+
+1. interaction terms
+2. Non-linear effect adding coefficients
+
+Col linearity - Correlation Matrix - if between two variables
+Multicollinearity - if the co-relation between more than two variables - Variance inflaction factor (VIF)
+    - Solution  - remove
+                -  Combine the two variables
+
+####################################################################
+############ CLASSIFICATION PROBLEMS ###############################
+#####################################################################
+
+
+
+# Classification
+```{r modifying datasets for classification }
+raw.data.allsoil$UCS.class = ifelse(raw.data.allsoil$UCS.psi<= strength.limit,0,1) # defining a new classes
+#pairs(raw.data.allsoil[,c(1,2,5,6,9,10,11,12,14)], col = raw.data.allsoil$UCS.class) # scatter matrix plot
+# using whole dataset
+attach(raw.data.allsoil)
+formula.class = as.formula(UCS.class~LL+PL+Clay+Sand+Lime+Cement+Asphalt) # Model use for Logistic Regression
+```
+## Logistic Regression
+
+``` {r fig.height=5, fig.width=5}
+glm.fit = glm(formula.class,family = binomial, data = raw.data.allsoil) # fiitng logistic regression model with 1 being Pass
+summary(glm.fit)
+glm.probs = predict(glm.fit, type = "response") # predicting the train data with the model
+glm.pred = ifelse(glm.probs>0.6,"Pass","Fail") # Setting the threshold value 
+table(glm.pred,raw.data.allsoil$UCS.code) # table for acutal and predicted values
+mean(glm.pred == raw.data.allsoil$UCS.code) # mean classification performance i.e. total percentage of correct classification
+
+## Making ROC and AUC - for binary classifiers only
+pred = prediction(glm.probs,raw.data.allsoil$UCS.class)
+roc =  performance(pred,"tpr","fpr")
+
+plot(roc, 
+     colorize = T,
+     main = "ROC Curve")
+abline(a=0,b=1)
+
+auc = performance(pred,"auc")
+
+auc = round(unlist(slot(auc,"y.values")),2)
+legend(0.6,0.2,auc,title = "AUC")
+
+```
+
+``` {r montana_data}
+raw.data.montana$UCS.class = ifelse(raw.data.montana$UCS.psi<= strength.limit,0,1) # defining a new classes
+
+glm.fit = glm(formula.class,family = binomial, data = raw.data.allsoil) # fititng logistic regression model with 1 being Pass
+summary(glm.fit)
+glm.probs = predict(glm.fit, newdata = raw.data.montana ,type = "response") # predicting the train data with the model
+glm.pred = ifelse(glm.probs>0.6,"Pass","Fail") # Setting the threshold value 
+table(predicted = glm.pred, actual = raw.data.montana$UCS.code) # table for acutal and predicted values
+mean(glm.pred == raw.data.montana$UCS.code) # mean classification performance i.e. total percentage of correct classification
+
+## Making ROC and AUC - for binary classifiers only
+pred = prediction(glm.probs,raw.data.montana$UCS.class)
+roc =  performance(pred,"tpr","fpr")
+
+plot(roc, 
+     colorize = T,
+     main = "ROC Curve")
+abline(a=0,b=1)
+
+auc = performance(pred,"auc")
+
+auc = round(unlist(slot(auc,"y.values")),2)
+legend(0.6,0.2,auc,title = "AUC")
+
+```
+
+
+
+```{r fig.height=2.5, fig.width=3.5}
+# Using test and train data
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+
+# intializaing for train set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+    glm.fit = glm(formula.class, data = raw.data.allsoil[fold!=ii,], 
+                  family = binomial)# using 4 out of 5 data part to come up with the model parameters as train set
+    
+    # Test Error Calculation
+    
+    glm.probs = predict(glm.fit, newdata = raw.data.allsoil[fold==ii,], type = "response") # predicting the dataset with test set
+    glm.pred = ifelse(glm.probs>0.6,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & raw.data.allsoil[fold==ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & raw.data.allsoil[fold==ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & raw.data.allsoil[fold==ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & raw.data.allsoil[fold==ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(glm.pred ==raw.data.allsoil[fold==ii,]$UCS.code)#ratio of correct prediction
+    auc[jj,ii] = auc.calc(glm.probs,raw.data.allsoil[fold==ii,]$UCS.class)
+    
+    # training error calculation
+   
+    glm.probs = predict(glm.fit, newdata = raw.data.allsoil[fold!=ii,], type = "response") # predicting the dataset with test set
+    glm.pred = ifelse(glm.probs>0.6,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & raw.data.allsoil[fold!=ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & raw.data.allsoil[fold!=ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & raw.data.allsoil[fold!=ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & raw.data.allsoil[fold!=ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(glm.pred ==raw.data.allsoil[fold!=ii,]$UCS.code)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(glm.probs,raw.data.allsoil[fold!=ii,]$UCS.class)
+    
+    
+    
+    
+  }
+}
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  #plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+                             #fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"LR")[[mm]])
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,
+                             "LR")[[mm]])
+  
+}
+
+```
+
+## Linear Discriminant Analysis
+
+Selecting the class is depends on which probability is higher rather than giving threshold to the probability.
+
+``` {r}
+# using whole dataset
+lda.fit = lda(formula.class, data = raw.data.allsoil)
+#lda.fit
+plot(lda.fit)
+lda.pred = predict(lda.fit, newdata = raw.data.allsoil)
+#lda.class2 = ifelse(lda.predict$posterior[,2]>0.6,1,0)
+lda.class = lda.pred$class
+table(lda.class,raw.data.allsoil$UCS.class)
+mean(lda.class == raw.data.allsoil$UCS.class)# mean of the whole data mean performance
+
+## Making ROC and AUC - for binary classifiers only
+plot.roc(lda.pred$posterior[,2],raw.data.allsoil$UCS.class,"ROC Curve for LDA") # suing the function plot.roc
+
+```
+
+
+```{r fig.height=2.5, fig.width=3.5}
+# using test train data
+# Using test and train data
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+    lda.fit = lda(formula.class, data = raw.data.allsoil[fold!=ii,])# using 4 out of 5 data part to come up with the model parameters as train set
+    lda.pred = predict(lda.fit, newdata = raw.data.allsoil[fold==ii,]) # predicting the dataset with test set
+    lda.class = lda.pred$class
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(lda.class == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(lda.class == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(lda.class == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(lda.class == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(lda.pred$class == raw.data.allsoil[fold==ii,]$UCS.class)#each row is a simulation each column is k-fold CV values
+    auc[jj,ii] = auc.calc(lda.pred$posterior[,2],raw.data.allsoil[fold==ii,]$UCS.class)
+    
+    
+    # training error calculation
+   
+    lda.pred = predict(lda.fit, newdata = raw.data.allsoil[fold!=ii,]) # predicting the dataset with test set
+    lda.class = lda.pred$class
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(lda.class == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(lda.class == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(lda.class == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(lda.class == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(lda.pred$class == raw.data.allsoil[fold!=ii,]$UCS.class)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(lda.pred$posterior[,2],raw.data.allsoil[fold!=ii,]$UCS.class)
+    
+    
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  # plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+  #                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"LDA")[[mm]])
+  # 
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,"LDA")[[mm]])
+}
+
+```
+
+## Quadratic Discriminant Analysis
+
+Selecting the class is depends on which probability is higher rather than giving threshold to the probability.
+
+```{r}
+# using whole dataset
+qda.fit = qda(formula.class, data = raw.data.allsoil)
+qda.fit
+summary(qda.fit)
+qda.predict = predict(qda.fit, newdata = raw.data.allsoil)
+qda.class2 = ifelse(qda.predict$posterior[,2]>0.65,1,0) # using 0.65 as cutoff from AUC curve
+#qda.class = qda.predict$class
+table(qda.class2,raw.data.allsoil$UCS.class)
+mean(qda.class2 == raw.data.allsoil$UCS.class)# mean of the whole data mean performance
+
+## Making ROC and AUC - for binary classifiers only
+plot.roc(qda.predict$posterior[,2],raw.data.allsoil$UCS.class,"ROC for QDA")
+
+```
+
+```{r fig.height=2.5, fig.width=3.5}
+# using test train data
+# Using test and train data
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+    qda.fit = qda(formula.class, data = raw.data.allsoil[fold!=ii,])# using 4 out of 5 data part to come up with the model parameters as train set
+    qda.predict = predict(qda.fit, newdata = raw.data.allsoil[fold==ii,]) # predicting the dataset with test set
+    qda.class2 = ifelse(qda.predict$posterior[,2]>0.65,1,0) # using 0.65 as cutoff from AUC curve
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(qda.class2 == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(qda.class2 == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(qda.class2 == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(qda.class2 == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(qda.class2 == raw.data.allsoil[fold==ii,]$UCS.class) # each row is a simulation each column is k-fold CV values
+    auc[jj,ii] = auc.calc(qda.predict$posterior[,2],raw.data.allsoil[fold==ii,]$UCS.class)
+    
+    # training error calculation
+    qda.predict = predict(qda.fit, newdata = raw.data.allsoil[fold!=ii,]) # predicting the dataset with test set
+    qda.class2 = ifelse(qda.predict$posterior[,2]>0.65,1,0) # using 0.65 as cutoff from AUC curve
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(qda.class2 == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(qda.class2 == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(qda.class2 == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(qda.class2 == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(qda.class2 == raw.data.allsoil[fold!=ii,]$UCS.class)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(qda.predict$posterior[,2],raw.data.allsoil[fold!=ii,]$UCS.class)
+    
+    
+    
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  # plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+  #                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"QDA")[[mm]])
+   plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,"QDA")[[mm]])
+}
+
+
+```
+
+
+## GAM
+
+
+## KNN ( K- Nearest Neighbor Classification)
+Nearest to it.
+
+```{r preparing dataset}
+# scaling the dataset expect for UCS code column
+standardized.raw.data.allsoil = scale(raw.data.allsoil[,-c(13,14)]) # excluding two columns
+fold = sample(x = 1:5,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+train = standardized.raw.data.allsoil[fold!=1,] # creating a training sample for samples expect folding
+test = standardized.raw.data.allsoil[fold==1,]
+direction = raw.data.allsoil$UCS.class[fold!=1]
+knn.predit = knn(train,test,direction,k=11)# using 4 out of 5 data part to come up with the model parameters as train set
+table(knn.predit,raw.data.allsoil$UCS.class[fold==1]) 
+
+```
+
+```{r optimizing value of nearest neighbour,fig.height=4, fig.width=10}
+# using test and train data for 5 fold CV with 100 random simulations
+kk = 1 # intial value for start of the k nearest neighbour
+k=5 # no of folds
+kk.end = 20
+simul = 200 # number of simulations
+median.performance = matrix(NA,kk.end-1,1) # predefining a matrix for storing mean performance
+mean.performance = array(NA,dim = c(simul,k)) # predefining a matrix for storing mean performance
+for (kk in 1:kk.end) {
+  jj = 1 # intializing the value for the loop
+  for (jj in 1:simul) {
+    ii= 1 # intialzing value for each loop
+    #set.seed(10)
+    fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = standardized.raw.data.allsoil[fold!=ii,] # creating a training sample for samples expect folding
+      test = standardized.raw.data.allsoil[fold==ii,]
+      direction = raw.data.allsoil$UCS.class[fold!=ii]
+      knn.predit = knn(train,test,direction,k=kk)# using 4 out of 5 data part to come up with the model parameters as train set
+      mean.performance[jj,ii] = mean(knn.predit == raw.data.allsoil$UCS.class[fold==ii]) # each row is a simulation each column is k-fold CV values
+      
+    }
+  }
+  
+  median.performance[kk] = median(stack(as.data.frame(mean.performance))$values)
+  
+}
+
+median.dataframe = data.frame(1:kk.end,median.performance)
+
+ggplot(data = median.dataframe[-1,],aes(x =median.dataframe$X1.kk.end[-1], y = median.dataframe$median.performance[-1]))+
+  geom_point(col= "black", size = 2)+
+  geom_smooth(model = lm, alpha = 0.2)+
+  xlab("Folds")+ylab("Mean Classification performance")+
+  ggtitle(" Optimum Value of K for KNN classification - 5-Fold CV 200 simulations")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits = c(2,kk.end), breaks = c(2:kk.end)) # plot of each fold and their correponding distribution of mean performance
+
+
+```
+
+
+```{r optimizing value of nearest neighbour,fig.height=2.5, fig.width=3.5}
+# using test and train data for 5 fold CV with 100 random simulations
+kk = 1 # intial value for start of the k nearest neighbour
+k=5 # no of folds
+kk.end = 20
+simul = 200 # number of simulations
+mean.performance = matrix(NA,kk.end,simul) # predefining a matrix for storing mean performance
+mean.performance.ii = matrix(NA,k,1) # predefining a matrix for storing mean performance
+#mean.performance = array(NA,dim = c(simul,k)) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  
+  for (kk in 1:kk.end) {
+    
+    for (ii in 1:k) {
+      train = standardized.raw.data.allsoil[fold!=ii,] # creating a training sample for samples expect folding
+      test = standardized.raw.data.allsoil[fold==ii,]
+      direction = raw.data.allsoil$UCS.class[fold!=ii]
+      knn.predit = knn(train,test,direction,k=kk)# using 4 out of 5 data part to come up with the model parameters as train set
+      mean.performance.ii[ii] = mean(knn.predit == raw.data.allsoil$UCS.class[fold==ii]) # each row is a simulation each column is k-fold CV values
+      
+    }
+    mean.performance[kk,jj] = mean(mean.performance.ii)
+    
+  }
+  
+  #median.performance[kk] = median(stack(as.data.frame(mean.performance))$values)
+  
+}
+mean.performance = apply(mean.performance, 1, mean)
+
+mean.dataframe = data.frame(1:kk.end,mean.performance)
+
+ggplot(data = mean.dataframe,aes(x =mean.dataframe$X1.kk.end, y = mean.dataframe$mean.performance))+
+  geom_point(col= "black", size = 2)+
+  geom_smooth(model = lm, alpha = 0.2)+
+  xlab("Folds")+ylab("Mean Classification performance")+
+  ggtitle(" Optimum Value of K for KNN classification - 5-Fold CV 200 simulations")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  scale_x_continuous(limits = c(2,kk.end), breaks = c(2:kk.end)) # plot of each fold and their correponding distribution of mean performance
+
+
+```
+
+```{r}
+# using test and train data for 5 fold CV with 100 random simulations
+simul = 200 # number of simulations
+jj = 1 # intializing the value for the loop
+k = 5 # number of folds of sample
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+for (jj in 1:simul) {
+  ii= 1 # intialzing value for each loop
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+      train = standardized.raw.data.allsoil[fold!=ii,] # creating a training sample for samples expect folding
+      test = standardized.raw.data.allsoil[fold==ii,]
+      direction = raw.data.allsoil$UCS.class[fold!=ii]
+    knn.predit = knn(train,test,direction,k=9)# using 4 out of 5 data part to come up with the model parameters as train set
+    mean.performance[jj,ii] = mean(knn.predit == raw.data.allsoil$UCS.class[fold==ii])# comparing prediction with actual value 
+  }
+}
+
+mean.performance = stack(as.data.frame(mean.performance)) # changing the matrix to dataframe and stacking the columns
+ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+  geom_boxplot(notch = T, outlier.color = "red")+
+  geom_point(col= "blue", size = 2, alpha = 0.1)+
+  xlab("Folds")+ylab("Mean Classification performance")+
+  ggtitle("5 fold CV for 100 simulations for Classification Performance of Test Set")+
+  theme(plot.title = element_text(hjust = 0.5),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+
+
+
+```
+
+
+
+```{r fig.height=2.5, fig.width=3.5}
+# using test and train data for 5 fold CV with 100 random simulations
+simul = 200 # number of simulations
+jj = 1 # intializing the value for the loop
+k = 5 # number of folds of sample
+
+# Initializing for test set
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+for (jj in 1:simul) {
+  ii= 1 # intialzing value for each loop
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train = standardized.raw.data.allsoil[fold!=ii,] # creating a training sample for samples expect folding
+    test = standardized.raw.data.allsoil[fold==ii,]
+    direction = raw.data.allsoil$UCS.class[fold!=ii]
+    knn.predit = knn(train,test,direction,k=9)# using 4 out of 5 data part to come up with the model parameters as train set
+    
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(knn.predit == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(knn.predit == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(knn.predit == 1 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(knn.predit == 0 & raw.data.allsoil[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(knn.predit == raw.data.allsoil[fold==ii,]$UCS.class)# comparing prediction with actual value
+    
+    # Calculating for test set
+    knn.predit = knn(train,train,direction,k=9)# using 4 out of 5 data part to come up with the model parameters as train set
+    fp = sum(1==(knn.predit == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(knn.predit == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(knn.predit == 1 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(knn.predit == 0 & raw.data.allsoil[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(knn.predit == raw.data.allsoil[fold!=ii,]$UCS.class)#ratio of correct prediction
+  }
+}
+
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  # plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+  #                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"KNN")[[mm]])
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,"KNN")[[mm]])
+}
+
+
+
+# mean.performance = stack(as.data.frame(mean.performance)) # changing the matrix to dataframe and stacking the columns
+# ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+#   geom_boxplot(notch = T, outlier.color = "red")+
+#   geom_point(col= "blue", size = 2, alpha = 0.1)+
+#   xlab("Folds")+ylab("Mean Classification performance")+
+#   ggtitle("5 fold CV for 100 simulations for Classification Performance of Test Set")+
+#   theme(plot.title = element_text(hjust = 0.5),
+#         axis.title.x = element_text(size = 10, face = "bold"),
+#         axis.title.y = element_text(size = 10, face = "bold")) # plot of each fold and their correponding distribution of mean performance
+
+
+
+```
+
+
+
+```{r eval=FALSE, fig.align='center', fig.cap="Box", fig.height=3, fig.width=6, include=FALSE}
+mean.performance$ind = "All Values"  # combining all the values of each column to one
+mean.error = mean(mean.performance$values) # mean of the whole data mean performance
+
+ggplot(data = mean.performance,aes(x = as.factor(ind), y = values))+
+  geom_boxplot(notch = T, outlier.color = "red")+
+  geom_point(col= "blue", size = 2, alpha = 0.1)+
+  xlab("Folds")+ylab("Mean Classification performance")+
+  ggtitle("Classification Performance of Test Set")+
+  theme(plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        axis.title.y = element_text(size = 10, face = "bold"))+
+  coord_flip()+ guides(fill = "black")+
+  stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")
+
+summary(mean.performance)
+paste("IQR")
+
+```
+
+## Support Vector Machine (SVM)
+### preparing dataset for performing SVm classification
+```{r data_prep_for_SVM}
+# for classification - reponse must be a factor variable
+raw.data.allsoil.svm  = raw.data.allsoil[,-c(3,4,8,12,13)] # creating a new variable for SVM
+raw.data.allsoil.svm$UCS.class = as.factor(ifelse(raw.data.allsoil.svm$UCS.class == 0,-1,1)) # changing the response to 1 and -1 and as factor varaible to run the pakage of SVM
+```
+
+### Performing SVM for Linear Kernel
+
+```{r SVM _Linear Function_optimum_cost}
+## using test and train data for 5 fold CV to find optimum values of cost for linear support vectors
+k = 5 # number of folds of sample
+no.of.simulation = 10
+cost.vec = c (0.001,0.01,0.1,1,10,100,1000,10000)
+mean.performance = matrix(NA,length(cost.vec),no.of.simulation) # predefining a matrix for storing mean performance
+mean.performance.ii = matrix(NA,k,1) # predefining a matrix for storing mean performance
+
+
+for (kk in 1:no.of.simulation) {
+  
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (jj in 1:length(cost.vec)) {
+    
+    for (ii in 1:k) {
+      train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+      test = raw.data.allsoil.svm[fold==ii,]
+      svm.fit = svm(formula.class,data = train, kernel = "linear", cost = cost.vec[jj], scale = T)   
+      svm.predict = predict(svm.fit,test)
+      mean.performance.ii[ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+    }
+    mean.performance[jj,kk] = mean(mean.performance.ii)
+  }
+
+}
+
+
+
+# Selecting the optimum cost 
+mean.svm  =  apply(mean.performance,1,mean)
+matrix.cost = data.frame(cost.vec,mean.svm)
+opt.cost = matrix.cost[match(max(matrix.cost[,2]),matrix.cost[,2]),1] # selecting the optimum cost
+
+plot(log(cost.vec), mean.svm, type ="l")
+
+svm.fit = svm(formula.class,data = raw.data.allsoil.svm, kernel = "linear", cost = opt.cost, scale = T)
+svm.predict = predict(svm.fit,raw.data.allsoil.svm)
+svm.predict.decision.values = attributes(predict(svm.fit,raw.data.allsoil.svm, decision.values = T))$decision.values
+svm.predict = ifelse(svm.predict.decision.values>0.35,1,-1) # selectomg the decision boundary based on ROC curve for the whole dataset
+plot.roc(svm.predict.decision.values,raw.data.allsoil.svm$UCS.class,"ROC for SVM using Linear Kernel")
+table(predict = svm.predict,truth = raw.data.allsoil.svm$UCS.class) # using the decision boundary of 0.35 for classification
+mean(svm.predict == raw.data.allsoil.svm$UCS.class)
+
+```
+
+``` {r performance_measure_linear}
+# using optimum cost and running 200 simulations for calculating AUC distr
+
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+    test = raw.data.allsoil.svm[fold==ii,]
+    svm.fit = svm(formula.class,data = train, kernel = "linear", cost = opt.cost, scale = T)   
+    #svm.predict = predict(svm.fit,test)
+    svm.predict.decision.values = attributes(predict(svm.fit,test, decision.values = T))$decision.values
+    svm.predict = ifelse(svm.predict.decision.values>0.35,1,-1) # selectomg tje decision boundary based on ROC curve
+    
+    fp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of false postive
+    tn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of true negative
+    tp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    
+    mean.performance[jj,ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = test, decision.values = T))$decision.values
+    auc[jj,ii] = auc.calc(svm.predict.decision.values,test$UCS.class)
+    
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc, "SVM-Linear")[[mm]])
+}
+
+```
+
+
+
+### Performing SVM for polynomial kernel
+
+```{r SVM_Polynomial Function}
+
+# using test and train data for 5 fold CV to find optimum values of cost for linear support vectors
+jj = 1 # intializing the value for the loop
+k = 5 # number of folds of sample
+
+no.of.simulation = 10
+
+
+mean.performance.ii = matrix(NA,k,1) # predefining a matrix for storing mean performance
+
+cost.vec = c (0.0001,0.001,0.01,0.1,1,10,100,1000,10000)
+poly.vec = c (1,2,3,4,5,6)
+mean.performance =array(NA,c(length(cost.vec),length(poly.vec),no.of.simulation)) # predefining a matrix for storing mean performance
+opt.cost = matrix(NA,length(poly.vec), 1)
+opt.perform = matrix(NA,length(poly.vec),1)
+
+
+for (ll in 1:no.of.simulation) {
+  
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  
+  for (kk in 1:length(poly.vec)) {
+    
+    for (jj in 1:length(cost.vec)) {
+      
+      for (ii in 1:k) {
+        train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+        test = raw.data.allsoil.svm[fold==ii,]
+        svm.fit = svm(formula.class,data = train, kernel = "polynomial",degree = poly.vec[kk] ,cost = cost.vec[jj], scale = T)   
+        svm.predict = predict(svm.fit,test)
+        mean.performance.ii[ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+      }
+      mean.performance[jj,kk,ll] = mean(mean.performance.ii)  
+      
+        
+      #   mean.svm  =  apply(mean.performance,2,mean)
+      # matrix.cost = data.frame(cost.vec,mean.svm)
+      # opt.cost[kk] = matrix.cost[match(max(matrix.cost[,2]),matrix.cost[,2]),1] # selecting the optimum cost 
+      # opt.perform[kk] = max(matrix.cost[,2])
+      
+    }
+  }
+}
+ 
+mean.performance=apply(mean.performance, c(1,2), mean)
+
+image(x = log(cost.vec),y = poly.vec,z = mean.performance, 
+      zlim = c(0.5,1),
+      col = heat.colors(12))
+
+# Selecting the optimum cost and polynomial 
+
+# matrix.cost = data.frame(poly.vec,opt.cost,opt.perform)
+# opt.poly.cost = matrix.cost[match(max(matrix.cost[,3]),matrix.cost[,3]),c(1,2)] # selecting the optimum cost
+
+loc = which(mean.performance == max(mean.performance), arr.ind = T)
+opt.poly.cost = c(poly.vec[loc[2]],cost.vec[loc[1]])
+
+
+
+# fitting to the whole dataset
+svm.fit = svm(formula.class,data = raw.data.allsoil.svm, kernel = "polynomial",degree = opt.poly.cost[1] ,cost = opt.poly.cost[2], scale = T)
+svm.predict = predict(svm.fit,raw.data.allsoil.svm)
+svm.predict.decision.values = attributes(predict(svm.fit,raw.data.allsoil.svm, decision.values = T))$decision.values
+svm.predict = ifelse(svm.predict.decision.values >0.70,1,-1)
+plot.roc(svm.predict.decision.values,raw.data.allsoil.svm$UCS.class,"ROC for SVM using Polynomial Kernel")
+table(predict = svm.predict,truth = raw.data.allsoil.svm$UCS.class)
+mean(svm.predict == raw.data.allsoil.svm$UCS.class)
+
+```
+
+``` {r performance_measure_polynomial, fig.width = 3.5, fig.height = 2.5}
+# using optimum cost and degree of polynomial and running 200 simulations for calculating performance and AUC
+#opt.poly.cost = c(3,0.1)
+
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+for (jj in 1:simul) {
+  
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+    test = raw.data.allsoil.svm[fold==ii,]
+    svm.fit = svm(formula.class,data = train, kernel = "polynomial", degree = opt.poly.cost[1],cost = opt.poly.cost[2], scale = T)   
+    #svm.predict = predict(svm.fit,test)
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = test, decision.values = T))$decision.values
+    svm.predict = ifelse(svm.predict.decision.values>0.85,1,-1) # selectomg the decision boundary based on ROC curve
+    
+    fp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of false postive
+    tn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of true negative
+    tp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = test, decision.values = T))$decision.values
+    auc[jj,ii] = auc.calc(svm.predict.decision.values,test$UCS.class)
+    
+    
+    # training error calculation
+    svm.fit = svm(formula.class,data = train, kernel = "polynomial",gamma = opt.poly.cost[1] ,cost = opt.poly.cost[2], scale = T)   
+    svm.predict = predict(svm.fit,train)
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = train, decision.values = T))$decision.values
+    svm.predict = ifelse(svm.predict.decision.values >.85,1,-1)
+    
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == -1))# counting the number of false postive
+    tn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == -1))# counting the number of true negative
+    tp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(svm.predict == train$UCS.class)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(svm.predict.decision.values,train$UCS.class)
+    
+    
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  # plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+  #                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train, "SVM-Polynomial")[[mm]])
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,"SVM-Polynomial")[[mm]])
+}
+
+```
+
+
+### Performing SVM for radial kernel
+
+```{r SVM_Radial_Kernel}
+
+# using test and train data for 5 fold CV to find optimum values of cost for linear support vectors
+jj = 1 # intializing the value for the loop
+k = 5 # number of folds of sample
+
+no.of.simulation = 10
+
+mean.performance.ii = matrix(NA,k,1) # predefining a matrix for storing mean performance
+
+cost.vec = c (0.001,0.01,0.1,1,10,100,1000,10000)
+poly.vec = c (1,2,3,4,5,6)
+mean.performance =array(NA,c(length(cost.vec),length(poly.vec),no.of.simulation)) # predefining a matrix for storing mean performance
+opt.cost = matrix(NA,length(poly.vec), 1)
+opt.perform = matrix(NA,length(poly.vec),1)
+
+
+for (ll in 1:no.of.simulation) {
+  
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  
+  for (kk in 1:length(poly.vec)) {
+    
+    for (jj in 1:length(cost.vec)) {
+      
+      for (ii in 1:k) {
+        train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+        test = raw.data.allsoil.svm[fold==ii,]
+        svm.fit = svm(formula.class,data = train, kernel = "radial",gamma = poly.vec[kk] ,cost = cost.vec[jj], scale = T)   
+        svm.predict = predict(svm.fit,test)
+        mean.performance.ii[ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+      }
+      mean.performance[jj,kk,ll] = mean(mean.performance.ii)  
+      
+        
+      #   mean.svm  =  apply(mean.performance,2,mean)
+      # matrix.cost = data.frame(cost.vec,mean.svm)
+      # opt.cost[kk] = matrix.cost[match(max(matrix.cost[,2]),matrix.cost[,2]),1] # selecting the optimum cost 
+      # opt.perform[kk] = max(matrix.cost[,2])
+      
+    }
+  }
+}
+ 
+mean.performance=apply(mean.performance, c(1,2), mean)
+
+image(x = log(cost.vec),y = poly.vec,z = mean.performance, 
+      zlim = c(0.5,1),
+      col = heat.colors(12))
+
+# Selecting the optimum cost and polynomial 
+
+# matrix.cost = data.frame(poly.vec,opt.cost,opt.perform)
+# opt.poly.cost = matrix.cost[match(max(matrix.cost[,3]),matrix.cost[,3]),c(1,2)] # selecting the optimum cost
+
+loc = which(mean.performance == max(mean.performance), arr.ind = T)
+
+
+
+# fitting to the whole dataset
+svm.fit = svm(formula.class,data = raw.data.allsoil.svm, kernel = "radial",gamma = opt.poly.cost[1] ,cost = opt.poly.cost[2], scale = T)
+svm.predict = predict(svm.fit,raw.data.allsoil.svm)
+svm.predict.decision.values = attributes(predict(svm.fit,raw.data.allsoil.svm, decision.values = T))$decision.values
+svm.predict = ifelse(svm.predict.decision.values >-0.2,1,-1)
+plot.roc(svm.predict.decision.values,raw.data.allsoil.svm$UCS.class,"ROC for SVM using Radial Kernel")
+table(predict = svm.predict,truth = raw.data.allsoil.svm$UCS.class)
+mean(svm.predict == raw.data.allsoil.svm$UCS.class)
+```
+
+``` {r performance_measure_radial, fig.height=2.5, fig.width=3.5}
+# using optimum cost and degree of polynomial and running 200 simulations for calculating performance and AUC
+#opt.poly.cost = c(0.01, 10)
+
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(raw.data.allsoil), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    train = raw.data.allsoil.svm[fold!=ii,] # creating a training sample for samples expect folding
+    test = raw.data.allsoil.svm[fold==ii,]
+    svm.fit = svm(formula.class,data = train, kernel = "radial",gamma = opt.poly.cost[1] ,cost = opt.poly.cost[2], scale = T)   
+    svm.predict = predict(svm.fit,test)
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = test, decision.values = T))$decision.values
+    svm.predict = ifelse(svm.predict.decision.values >-0.2,1,-1)
+    fp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of false postive
+    tn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == -1))# counting the number of true negative
+    tp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(svm.predict == test$UCS.class)# calculating error rate: comparing prediction with actual value
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = test, decision.values = T))$decision.values
+    auc[jj,ii] = auc.calc(svm.predict.decision.values,test$UCS.class)
+    
+    # training error calculation
+    svm.fit = svm(formula.class,data = train, kernel = "radial",gamma = opt.poly.cost[1] ,cost = opt.poly.cost[2], scale = T)   
+    svm.predict = predict(svm.fit,train)
+    svm.predict.decision.values = attributes(predict(svm.fit,newdata = train, decision.values = T))$decision.values
+    svm.predict = ifelse(svm.predict.decision.values >-0.2,1,-1)
+    
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == -1))# counting the number of false postive
+    tn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == -1))# counting the number of true negative
+    tp = sum(1==(svm.predict == 1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(svm.predict == -1 & raw.data.allsoil.svm[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(svm.predict == train$UCS.class)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(svm.predict.decision.values,train$UCS.class)
+
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:5){
+  # plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+  #                            fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"SVM-Radial Kernel")[[mm]])
+  plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc, "SVM-Radial Kernel")[[mm]])
+}
+
+```
+
+
+
+
+
+
+
+
+
