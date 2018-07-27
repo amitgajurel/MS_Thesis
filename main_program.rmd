@@ -2,7 +2,7 @@
 title: "Main Program"
 output: html_notebook
 ---
-
+# Start
 ```{r removing_Data,include=FALSE}
 # removing all the variables in the environment
 rm(list = ls())
@@ -18,37 +18,16 @@ knitr::opts_chunk$set(
 # use_virtualenv("r-reticulate")
 ```
 
+# Loading Packages
 ```{r loading_Pakages,include=FALSE}
-# loading some pakages
-#library(xlsx) # loading the library pakage to import excel files
+# naming the packages required
+pkgs = c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments","leaps" ,"devtools","caTools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima", "microbenchmark","profvis","memoise","compiler")
 
-# install.packages(c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments",
-#                    "leaps","devtools","catools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima"))
+# installing the pakages if running for the first time
+#install.packages(pkgs)
 
-
-library(ggplot2) # plotting the dataset
-library(dplyr) # manupulating the dataframe
-library(GGally)# scatter matrix plot
-library(plotly)# plotting pakage
-library(AID) # pakagef for box cox tranformation
-library(MASS) # general stats pakage
-library(boxcoxmix) # for boxcox tranformation
-library(car)
-library(moments)
-library(leaps)
-library(devtools)
-library(caTools)
-library(readxl) # loading the library pakage to import excel files
-library(dplyr)# pakage for data manipulation
-library(class)
-library(ROCR) # pakage for ROC and AUC for classification
-library(qwraps2) #
-library(knitr) # for formating R-Markdown
-library(e1071) # pakage for SVM
-library(glmnet)# lasso and ridge regression
-library(gam) # package for generalized additive model
-library(splines) # package for fitting regression splines
-library(akima) # akima
+# loading the pakages
+lapply(pkgs,library, character.only = TRUE)
 
 ```
 
@@ -57,7 +36,7 @@ First step is to load the data set. The soil database from Burrogh is loaded. Th
 
 ```{r loading_dataset,warning=FALSE}
 # Loading all the Australian Soil data. 
-raw.data = read_excel("C:/Users/amitgajurel/Google Drive/Thesis/Data/Australian Soils.xlsx",sheet = "all_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+raw.data = read_excel("Data/Australian Soils.xlsx",sheet = "all_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
 raw.data = raw.data[complete.cases(raw.data),]
 attach(raw.data)
 raw.data.allsoil = raw.data[,c("LL","PL","PI","Linear Shrinkage (LS)","Clay","Sand","Gravel","UCS (Mpa)","Lime","Cement","Asphalt")] # creating new dataframe with only paramters required
@@ -68,7 +47,7 @@ raw.data.allsoil$UCS.code = ifelse(raw.data.allsoil$UCS.psi<strength.limit,"Fail
 detach(raw.data)
 
 # loading dataset for Montana Soils
-raw.data.montana = read_excel("C:/Users/amitgajurel/Google Drive/Thesis/Data/Australian Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+raw.data.montana = read_excel("Data/Australian Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
 raw.data.montana$UCS.psi = raw.data.montana$`UCS (Mpa)`
 raw.data.montana$UCS.code = ifelse(raw.data.montana$UCS.psi<strength.limit,"Fail","Pass")
 ```
@@ -1098,7 +1077,7 @@ ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = UCS
 
 
 
-```{r plot for lime,cement,asphalt , fig.width= 2.5, fig.height= 3}
+```{r, fig.width= 2.5, fig.height= 3}
 #binwidth = 50
 ggplot(data = raw.data.allsoil)+
   geom_bar(aes(x = raw.data.allsoil$Lime), fill = "cornflowerblue", colour = "black", alpha = 0.5)+
@@ -1121,7 +1100,7 @@ ggplot(data = raw.data.allsoil)+
   
 ```
 
-```{r plot for lime,cement,asphalt, fig.width= 2.5, fig.height= 3}
+```{r, fig.width= 2.5, fig.height= 3}
 
 #binwidth = 50
 ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])+
@@ -1145,7 +1124,7 @@ ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",])+
   
 ```
 
-```{r plot for lime,cement,asphalt, fig.width= 2.5, fig.height= 3}
+```{r , fig.width= 2.5, fig.height= 3}
 
 #binwidth = 50
 ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Pass",])+
@@ -2816,7 +2795,8 @@ table(knn.predit,raw.data.allsoil$UCS.class[fold==1])
 
 ```
 
-```{r optimizing value of nearest neighbour,fig.height=4, fig.width=10}
+```{r ,fig.height=4, fig.width=10}
+# optimizing value of nearest neighbour
 # using test and train data for 5 fold CV with 100 random simulations
 kk = 1 # intial value for start of the k nearest neighbour
 k=5 # no of folds

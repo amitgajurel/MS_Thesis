@@ -1,0 +1,163 @@
+---
+title: "Spatial "
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  eval = FALSE,
+	message = FALSE,
+	include = FALSE)
+```
+## Loading required libraries for spatial data analysis
+```{r}
+#install.packages("tictoc")
+library(sp)
+library(maps)
+library(arcgisbinding)
+library(maptools)
+library(raster)
+library(rgdal)
+library(tictoc)
+
+```
+## Loading raster data
+```{r}
+
+perclay <- raster("Montana/clay_per.tif")
+persilt <- raster("Montana/silt_per.tif")
+persand <- raster("Montana/sand_per.tif")
+liquid_limit <- raster("Montana/liquid_limit.tif")
+plastic_limit <- raster("Montana/plastic_limit.tif")
+perfines <- perclay+persilt
+# tic(msg = "Time for plotting")
+# plot(perfines, main = "Percentage Fines", 
+#      xlim = c(perclay@extent[1],perclay@extent[2]),
+#      ylim = c(perclay@extent[3],perclay@extent[4]))
+# plot(persand, main = "Percentage Sand ")
+# plot(liquid_limit, main ="Liquid Limit")
+# plot(plastic_limit, main = "Plastic Limit")
+# toc()
+# tic.clear()
+all_parameter_ras <- stack(liquid_limit,plastic_limit,perfines,persand)
+ras_values <- as.array(all_parameter_ras)
+temp_raster_file <- perclay
+
+```
+## plotting spatial data results for logistic regression
+```{r}
+#sourcePartial("C:/Rworking/Aus_markdown_all_soils_july6.Rmd",2512,2531)
+
+tic()
+per_lime <- 0 # intializing the amount of lime to be used
+per_cement <- 2 # initialzing the amount of cement to be used
+per_asphalt <- 0 # initializing the amount of asphalt to be used
+
+# using apply function to apply the userdefined custom function to all the values in the gridded data array
+temp.value = apply(ras_values,MARGIN = c(1,2),function(ras_values){ 
+  glm.coeff.vector = glm.fit$coefficients # getting coefficients
+  logregval = glm.coeff.vector[1]+
+    ras_values[1]*glm.coeff.vector[2]+
+    ras_values[2]*glm.coeff.vector[3]+
+    ras_values[3]*glm.coeff.vector[4]+
+    ras_values[4]*glm.coeff.vector[5]+
+    per_lime*glm.coeff.vector[6]+
+    per_cement*glm.coeff.vector[7]+
+    per_asphalt*glm.coeff.vector[8]
+  prob.log.reg = exp(logregval)/(1+exp(logregval))
+  
+  return(prob.log.reg) # predicting the test data with the model
+  
+  #return(ras_values[1]+ras_values[2]+ras_values[3]+ras_values[4])
+})
+values(temp_raster_file) <- temp.value
+toc();tic.clear()
+plot(temp_raster_file, main = "Logistic Regression Pass Probability")
+
+
+```
+## plotting for linear discriminant analysis
+```{r}
+tic()
+data.frame.cov = dplyr::select(raw.data.allsoil,c(LL,PL,Clay,Sand,Lime,Cement,Asphalt))
+sigma = cov(data.frame.cov)
+sigma.inv = ginv(cov(data.frame.cov))
+# #sigma.inv = cov(data.frame.cov)
+# x = as.matrix.data.frame(data.frame.cov[80,])
+mu1 = as.matrix.default(lda.fit$means[2,])
+mu0 = as.matrix.default(lda.fit$means[1,])
+#   
+# pass = x %*% sigma.inv %*% mu1 - 0.5 * t(mu1) %*% sigma.inv %*% mu1 + log(lda.fit$prior[2])
+# fail = x %*% sigma.inv %*% mu0 - 0.5 * t(mu0) %*% sigma.inv %*% mu0 + log(lda.fit$prior[1])
+# 
+# 
+# num = (1/(((2*pi)^3.5)*sqrt(det(sigma))))*(exp(-0.5 * (x-t(mu1)) %*% sigma.inv %*% (t(x)-mu1)))
+# den = (1/(((2*pi)^3.5)*sqrt(det(sigma))))*(exp(-0.5 * (x-t(mu0)) %*% sigma.inv %*% (t(x)-mu0)))
+# 
+# prob.of.pass = num*lda.fit$prior[2]/(num*lda.fit$prior[2]+den*lda.fit$prior[1])
+
+per_lime <- 0 # intializing the amount of lime to be used
+per_cement <- 2 # initialzing the amount of cement to be used
+per_asphalt <- 0 # initializing the amount of asphalt to be used
+
+# using apply function to apply the userdefined custom function to all the values in the gridded data array
+temp.value = apply(ras_values,MARGIN = c(1,2),function(ras_values){ 
+  x = t(as.matrix(c(ras_values,per_lime,per_cement,per_asphalt)))
+  
+  num = (1/(((2*pi)^3.5)*sqrt(det(sigma))))*(exp(-0.5 * (x-t(mu1)) %*% sigma.inv %*% (t(x)-mu1)))
+  den = (1/(((2*pi)^3.5)*sqrt(det(sigma))))*(exp(-0.5 * (x-t(mu0)) %*% sigma.inv %*% (t(x)-mu0)))
+  prob.of.pass = num*lda.fit$prior[2]/(num*lda.fit$prior[2]+den*lda.fit$prior[1])
+  return(prob.of.pass) # predicting the test data with the model
+})
+values(temp_raster_file) <- temp.value
+toc()
+plot(temp_raster_file, main = "Linear Discriminant Pass Probability")
+```
+## plotting for quadratic discriminant analysis
+```{r}
+tic()
+data.frame.cov.pass = dplyr::select(filter(raw.data.allsoil, 
+                                           UCS.class == 1),c(LL,PL,Clay,Sand,Lime,Cement,Asphalt))
+data.frame.cov.fail = dplyr::select(filter(raw.data.allsoil, 
+                                           UCS.class == 0),c(LL,PL,Clay,Sand,Lime,Cement,Asphalt))
+sigma.pass = cov(data.frame.cov.pass)
+sigma.fail = cov(data.frame.cov.fail)
+
+sigma.inv.pass = ginv(sigma.pass)
+sigma.inv.fail = ginv(sigma.fail)
+
+# #sigma.inv = cov(data.frame.cov)
+# x = as.matrix.data.frame(data.frame.cov[80,])
+mu1 = as.matrix.default(qda.fit$means[2,])
+mu0 = as.matrix.default(qda.fit$means[1,])
+
+per_lime <- 0 # intializing the amount of lime to be used
+per_cement <- 2 # initialzing the amount of cement to be used
+per_asphalt <- 0 # initializing the amount of asphalt to be used
+
+# using apply function to apply the userdefined custom function to all the values in the gridded data array
+temp.value = apply(ras_values,MARGIN = c(1,2),function(ras_values){ 
+  x = t(as.matrix(c(ras_values,per_lime,per_cement,per_asphalt)))
+  num = (1/(((2*pi)^3.5)*sqrt(det(sigma.pass))))*(exp(-0.5 * (x-t(mu1)) %*% sigma.inv.pass %*% (t(x)-mu1)))
+  den = (1/(((2*pi)^3.5)*sqrt(det(sigma.fail))))*(exp(-0.5 * (x-t(mu0)) %*% sigma.inv.fail %*% (t(x)-mu0)))
+  prob.of.pass = num*qda.fit$prior[2]/(num*qda.fit$prior[2]+den*qda.fit$prior[1])
+  return(prob.of.pass) # predicting the test data with the model
+})
+values(temp_raster_file) <- temp.value
+toc()
+plot(temp_raster_file, main = "Quadratic Discriminant Pass Probability")
+temp_raster_file
+
+```
+
+## plotting for K - Nearest Neighour
+
+```{r}
+
+
+
+
+```
+
+
+
