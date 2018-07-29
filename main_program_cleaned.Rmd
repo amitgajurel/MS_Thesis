@@ -1,0 +1,63 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+This Markdown shall contain a well written code as copied from the original verision. The aurthor shall be wary of the performance, readibility, and reproduceability of this code.
+
+# Start 
+This portion is writen to intialize the workspace and remove all the variables in the workspace.
+
+```{r}
+# removing all the variables in the environment
+rm(list = ls())
+# setting up the output of knitr such that code
+```
+# Loading packages
+This portion is written to load the additional packages required to do the computations
+```{r}
+pkgs = c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments","leaps" ,"devtools","caTools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima", "microbenchmark","profvis","memoise","compiler")
+
+# installing the pakages if running for the first time
+#install.packages(pkgs)
+
+# loading the pakages
+lapply(pkgs,library, character.only = TRUE) # loading all the library at once
+```
+# Loading Datasets
+```{r}
+raw.data = read_excel("Data/Australian Soils.xlsx",sheet = "all_soils")  # loading the dataframe from the file that user chooses from the sheet name collection_ready
+
+# choosing only the datasets which has values for all the parameters
+raw.data = raw.data[complete.cases(raw.data),]
+  
+# choosing the only the required parameters and creating a new dataframe
+raw.data.allsoil = raw.data[,c("LL","PL","PI","Linear Shrinkage (LS)","Clay","Sand","Gravel","UCS (Mpa)","Lime","Cement","Asphalt")]
+
+# converting the MPa UCS data to PSI
+raw.data.allsoil$UCS.psi = raw.data.allsoil$`UCS (Mpa)`*0.145038*1000
+strength.limit = 300 # cutoff limit for strength classification in psi is taken as median for now
+#strength.limit = median(raw.data.allsoil$UCS.psi) # cutoff limit for strength classification in psi is taken as median for now
+
+# creating a new parameter depending on pass and failing of the dataset
+raw.data.allsoil$UCS.code = ifelse(raw.data.allsoil$UCS.psi<strength.limit,"Fail","Pass")
+
+# loading dataset for Montana Soils
+raw.data.montana = read_excel("Data/Australian Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+raw.data.montana$UCS.psi = raw.data.montana$`UCS (Mpa)`
+raw.data.montana$UCS.code = ifelse(raw.data.montana$UCS.psi<strength.limit,"Fail","Pass")
+
+# loading dataset for American_modified_Proctor
+
+raw.data.amp = read_excel("Data/Australian Soils.xlsx", sheet = "American_modified_proctor")
+raw.data.amp$UCS.psi = raw.data.amp$`UCS (Mpa)`
+raw.data.amp$UCS.code = ifelse(raw.data.amp$UCS.psi < strength.limit,"Fail","Pass")
+
+```
+
+# Loading functions
+This portion is written to load the functions from **functions.for.main.program.R**
+```{r}
+source("functions.for.main.program.R") # loading functions from the program NOTE: This is very efficient and fast
+```
+
+
