@@ -1,5 +1,9 @@
 ---
+<<<<<<< HEAD
 title: "Spatial "
+=======
+title: "Spatial Plotting"
+>>>>>>> 7b19e8e0b28a825499f26bfc48ccbf43d89ea4e6
 output: html_notebook
 ---
 
