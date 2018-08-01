@@ -1,0 +1,12 @@
+name: App1
+title: App1
+username:
+account: msthesis
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 392242
+bundleId: 1508236
+url: https://msthesis.shinyapps.io/App1/
+when: 1532994290.12982
+asMultiple: FALSE
+asStatic: FALSE

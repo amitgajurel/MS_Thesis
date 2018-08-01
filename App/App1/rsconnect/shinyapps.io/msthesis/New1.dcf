@@ -1,0 +1,12 @@
+name: New1
+title: New1
+username:
+account: msthesis
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 392257
+bundleId: 1508271
+url: https://msthesisamit.shinyapps.io/New1/
+when: 1532996289.21207
+asMultiple: FALSE
+asStatic: FALSE
