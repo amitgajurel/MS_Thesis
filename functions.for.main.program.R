@@ -488,7 +488,7 @@ plot.mean.performance.reg = function(rmse.train,rmse.test,rsq.train,rsq.test,sch
 }
 
 # Simulation of model performance for linear Models
-simulation.reg = function(formula.lm, dataset,title){
+simulation.reg = function(formula.lm, dataset,title = " "){
   # input : formula.lm = formula for linear model
   #       : dataset = data for using in the model
   # output: run simulations
@@ -512,18 +512,18 @@ simulation.reg = function(formula.lm, dataset,title){
       lm.pred.train = predict(lin.fit,newdata = train)
       lm.pred.test = predict(lin.fit,newdata = test)
       
-      val.RMSE.train[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold!=ii]-lm.pred.train)^2))
-      val.RMSE.test[jj,ii] = sqrt(mean((raw.data.allsoil$UCS.psi[fold==ii]-lm.pred.test)^2))
+      val.RMSE.train[jj,ii] = sqrt(mean((train$UCS.psi-lm.pred.train)^2))
+      val.RMSE.test[jj,ii] = sqrt(mean((test$UCS.psi-lm.pred.test)^2))
       
-      val.rsq.train[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold!= ii],lm.pred.train)
-      val.rsq.test[jj,ii] = rsq.from.data(raw.data.allsoil$UCS.psi[fold == ii],lm.pred.test)
+      val.rsq.train[jj,ii] = rsq.from.data(train$UCS.psi,lm.pred.train)
+      val.rsq.test[jj,ii] = rsq.from.data(test$UCS.psi,lm.pred.test)
       
     }
   }
   
   
   # plotting the results using plot.mean.performance function
-  for(mm in 1:6){
+  for(mm in 5:6){
     plot(plot.mean.performance.reg(val.RMSE.train, val.RMSE.test, val.rsq.train,val.rsq.test, title)[[mm]])
   }
   
@@ -630,4 +630,119 @@ simulation.tuning.ns = function(tunning.parameter,dataset){
   
   
 }
+
+
+# plotting function for ggplot2 for normality test and distribution of the dataset
+plot.ggplot2.pdf = function(dataframe.data, xlab1 = " ", ylab1 = " ", xlab2 = " ", ylab2 = "", title = " "){
+  # Input: dataframe.data - dataframe of our dataset
+  # Output: a list of plot object of RDH and histogram
+  dataframe.data = data.frame(dataframe.data)
+  aesx = unlist(dataframe.data)
+  x = aesx
+  p1 = ggplot(data = dataframe.data, aes(x = aesx))+
+    geom_histogram(aes(y = ..density..), alpha = 0.25, fill = "cornflowerblue", color = "black", 
+                   bins = round(1+3.3*log10(length(x))),
+                   show.legend = TRUE)+  # using formula and calulating the number of bins
+    stat_function(fun = function(x){
+      dnorm(x, 
+            mean = mean(x),
+            sd = sd(x)
+      )
+    },
+    color = "darkred", size = 1,
+    show.legend = TRUE)+
+    geom_density( color = "blue", show.legend = TRUE)+
+    xlab(names(dataframe.data))+ ylab(ylab1)+
+    ggtitle(paste("RDH, Kernel, and Normal PDF", title ))+
+    theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"),
+          legend.position = "right")
+  
+  p2 = ggplot(data = dataframe.data, aes(x = aesx))+
+    geom_histogram(alpha = 0.25, fill = "cornflowerblue", color = "black", 
+                   bins = round(1+3.3*log10(length(x))),
+                   show.legend = TRUE)+
+    xlab(names(dataframe.data))+ ylab("No. of Obeservations")+
+    ggtitle(paste("Histogram ", title))+
+    theme(plot.title = element_text(hjust = 0.5,size = 10, face = "bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"),
+          legend.position = "right")
+    
+  
+  
+  return.value = list(p1,p2)
+  return(return.value)
+}
+
+plot.ggplot2.boxplot = function(dataframe.data,xlab = " ",ylab = " ", title = " "){
+  
+  # Input  : dataframe.data - dataframe of our dataset
+  #        : xlab - label for x-axis
+  #        : ylab - label for y-axis
+  #        : title - title for the plot
+  # Output : Returns plot object for the box plot
+  
+  data.to.use = stack(dataframe.data)
+  p1 = ggplot(data = data.to.use, aes(x = as.factor(ind), y = values))+
+    geom_boxplot(notch = T, outlier.color = "red")+
+    geom_point(col= "blue", size = 2, alpha = 0.05)+
+    theme(plot.title = element_text(hjust = 0.5, size = 10, face = "bold"),
+          axis.text.x = element_text(size=10,face="bold"),
+          axis.text.y = element_text(size=10,face="bold"),
+          axis.title.x = element_text(size = 10, face = "bold"),
+          axis.title.y = element_text(size = 10, face = "bold"))+
+    guides(fill = "black")+ ylab(ylab)+xlab(" ")+
+    stat_summary(fun.y="mean", geom="point", shape="x", size=8, fill="Green", col ="Orange")+
+    ggtitle(title)
+  return(p1)
+  
+}
+
+cleanup.NA.columns = function(data,column){
+  # Function to remove the data with NA in their parameters and select the columns 
+  #input    : data - dataset for cleaning
+  #         : column - columns you want selected
+  # output  : cleaned 
+  
+  data = data[complete.cases(data),] 
+  data = data[,column]
+  return(data)
+  
+}
+
+rsq.coff.of.det = function(data.acutal, data.perdicted){
+  
+  n = length(data.acutal)
+  sum.xy = sum(data.acutal*data.perdicted)
+  sumx.sumy = sum(data.acutal)*sum(data.perdicted)
+    
+}
+
+plot.ggplot2.lm = function(dataset, fit.object, title = " "){
+  dataset$predictedvalue = fit.object$fitted.value 
+  x1 = max(dataset$predictedvalue)
+  y1 = 0.5*mean(dataset$UCS.psi)
+  limxy = max(dataset$UCS.psi)
+  ggplot(data = dataset, aes(y = UCS.psi, x = predictedvalue ))+
+    geom_point(aes(col = Clay,size = LL), alpha = 0.5)+
+    scale_size(range = c(0,6))+
+    theme(plot.title = element_text(hjust = 0.5, face = "bold"),
+          legend.text = element_text(size = 12),
+          legend.title = element_text(hjust = 0.5, face = "bold"),
+          axis.title =element_text(hjust = 0.5, face = "bold"))+
+    scale_color_gradient(low="blue", high="red")+
+    xlim(c(0,limxy))+ ylim(c(0,limxy))+
+    geom_abline(slope = 1, intercept = 0, size = 1, col = "brown")+
+    ggtitle(title)+
+    xlab("Predicted UCS values")+ ylab("Actual UCS values")+
+    annotate("text", x = x1 , y = y1, 
+             label = paste(summary(fit.object)$r.squared))+
+    annotate("text", x = x1 , y = y1+1*y1, 
+             label = "R Squared")
+}
+
+
+
 

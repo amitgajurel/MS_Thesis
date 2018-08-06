@@ -23,41 +23,138 @@ pkgs = c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","mom
 # loading the pakages
 lapply(pkgs,library, character.only = TRUE) # loading all the library at once
 ```
-# Loading Datasets
-```{r}
-raw.data = read_excel("Data/Australian Soils.xlsx",sheet = "all_soils")  # loading the dataframe from the file that user chooses from the sheet name collection_ready
-
-# choosing only the datasets which has values for all the parameters
-raw.data = raw.data[complete.cases(raw.data),]
-  
-# choosing the only the required parameters and creating a new dataframe
-raw.data.allsoil = raw.data[,c("LL","PL","PI","Linear Shrinkage (LS)","Clay","Sand","Gravel","UCS (Mpa)","Lime","Cement","Asphalt")]
-
-# converting the MPa UCS data to PSI
-raw.data.allsoil$UCS.psi = raw.data.allsoil$`UCS (Mpa)`*0.145038*1000
-strength.limit = 300 # cutoff limit for strength classification in psi is taken as median for now
-#strength.limit = median(raw.data.allsoil$UCS.psi) # cutoff limit for strength classification in psi is taken as median for now
-
-# creating a new parameter depending on pass and failing of the dataset
-raw.data.allsoil$UCS.code = ifelse(raw.data.allsoil$UCS.psi<strength.limit,"Fail","Pass")
-
-# loading dataset for Montana Soils
-raw.data.montana = read_excel("Data/Australian Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
-raw.data.montana$UCS.psi = raw.data.montana$`UCS (Mpa)`
-raw.data.montana$UCS.code = ifelse(raw.data.montana$UCS.psi<strength.limit,"Fail","Pass")
-
-# loading dataset for American_modified_Proctor
-
-raw.data.amp = read_excel("Data/Australian Soils.xlsx", sheet = "American_modified_proctor")
-raw.data.amp$UCS.psi = raw.data.amp$`UCS (Mpa)`
-raw.data.amp$UCS.code = ifelse(raw.data.amp$UCS.psi < strength.limit,"Fail","Pass")
-
-```
-
 # Loading functions
 This portion is written to load the functions from **functions.for.main.program.R**
 ```{r}
 source("functions.for.main.program.R") # loading functions from the program NOTE: This is very efficient and fast
 ```
+
+
+# Loading Datasets
+```{r}
+# parameters to be used in the study
+required_paramters = c("LL","PL","Clay","Sand","Lime","Cement","Asphalt","UCS.psi")
+
+# Loading dataset from my excel file, cleaning up NA's, and selecting only the required parameters of the dataset
+data.aussies = read_excel("Data/Soils.xlsx",sheet = "Australian_Modified_Proctor")%>% cleanup.NA.columns(.,required_paramters)
+data.us = read_excel("Data/Soils.xlsx",sheet = "August5") %>% filter(.,Location == "US") %>%cleanup.NA.columns(.,required_paramters) 
+data.world = read_excel("Data/Soils.xlsx",sheet = "August5") %>% cleanup.NA.columns(.,required_paramters)
+
+# cutoff limit for strength classification in psi is taken as median for now
+strength.limit = readline(prompt = "Input Cuttoff Strength in psi: ") %>% as.double()
+#strength.limit = 300 
+
+# Assigning the selected dataset to a common working dataset
+core.data = data.frame(NA)
+user.query = menu(c("1. Australian Soil- Modified Proctor","2. American Soils - Standard Proctor", "3. Global Database - Standard Proctor"), graphics = FALSE, title = " Select the dataset type for the development of the model")
+if(user.query == 1) core.data = data.aussies
+if(user.query == 2) core.data = data.us
+if(user.query == 3) core.data = data.world
+
+# creating a new parameter depending on pass and failing of the dataset
+core.data$UCS.code = ifelse(core.data$UCS.psi < strength.limit,"Fail","Pass")
+```
+Loading other datasets
+```{r}
+# # Loading other datasets 
+# 
+# # loading dataset for Montana Soils
+# raw.data.montana = read_excel("Data/Soils.xlsx",sheet = "montana_soils") # loading the dataframe from the file that user chooses from the sheet name collection_ready
+# raw.data.montana$UCS.psi = raw.data.montana$`UCS (Mpa)`
+# raw.data.montana$UCS.code = ifelse(raw.data.montana$UCS.psi<strength.limit,"Fail","Pass")
+# 
+# 
+# # loading dataset for American_modified_Proctor
+# raw.data.amp = read_excel("Data/Soils.xlsx", sheet = "American_modified_proctor")
+# raw.data.amp$UCS.psi = raw.data.amp$`UCS (Mpa)`
+# raw.data.amp$UCS.code = ifelse(raw.data.amp$UCS.psi < strength.limit,"Fail","Pass")
+
+```
+
+# Decribing datasets
+This sections is used to summarise the data we used for development of statistical models. This include relative distribution of each parameters.
+```{r}
+# conducting the shapiro.result test for all the parameters in the study and converting the results to a dataframe
+# Selecting which dataset to use futher manipulation
+
+# shapiro.result = sapply(core.data[,required_paramters],function(x){
+#   shapiro.test(x)}) %>% data.frame()
+
+#plotting the results of each column of dataset for whole dataset
+for (ii in 1:length(required_paramters)) {
+  plot.ggplot2.pdf(core.data[,required_paramters[ii]]) %>% multiplot()
+}
+
+# plotting the results of each column of dataset for passed data
+for (ii in 1:length(required_paramters)) {
+  plot.ggplot2.pdf(core.data[core.data$UCS.code =="Pass",required_paramters[ii]]) %>% multiplot()
+}
+
+# plotting the results of each column of dataset for failed data
+for (ii in 1:length(required_paramters)) {
+  plot.ggplot2.pdf(core.data[core.data$UCS.code =="Pass",required_paramters[ii]]) %>% multiplot()
+}
+
+# plotting box and wishker plot for all the data
+plot.ggplot2.boxplot(core.data[,(names(core.data) %in% c("LL","PL","Sand","Clay"))]," ", title = "Boxplot for LL,PL,Sand, and Clay ") %>% plot()
+
+plot.ggplot2.boxplot(core.data[,(names(core.data) %in% c("Lime","Cement","Asphalt"))],"Percentage", title = "Boxplot for Lime, Cement, and Asphalt") %>% plot()
+
+plot.ggplot2.boxplot(core.data[,(names(core.data) %in% c("UCS.psi"))],ylab = "psi", title = "Boxplot for UCS values") %>% plot()
+
+# plotting scatter plot matrix for all the required parameters
+pairs(core.data[,required_paramters])
+
+```
+
+# Regression
+## Multiple Linear Regression (MLR)
+Multiple linear regression was performed with raw predictors such as LL, PL, percentage of Clay, percentage of Sand, lime percentage, and cement percentage. An interaction between sand and clay was also added in the second model which improved the accuracy of the model and proved to be a significant parameter.
+```{r}
+# Formula to be used as lm object
+form.untran.par = as.formula(UCS.psi ~ LL+ PL + Clay + Sand+ Lime+ Cement)
+form.inter.par = as.formula(UCS.psi ~ LL+ PL + Clay + Sand+ Lime+ Cement+ Sand:Clay)
+# Multiple Linear Regression
+fit.untran.mlr = lm(data = core.data, form.untran.par)
+fit.inter.mlr = lm(data = core.data, form.inter.par)
+summary(fit.untran.mlr); vif(fit.untran.mlr)
+summary(fit.inter.mlr); vif(fit.inter.mlr)
+par(mfrow = c(2,2));plot_ag(fit.untran.mlr);par(mfrow = c(1,1))
+par(mfrow = c(2,2));plot_ag(fit.inter.mlr);par(mfrow = c(1,1))
+plot.ggplot2.lm(dataset = core.data,fit.object = fit.untran.mlr, "MLR of Raw Predictor")
+plot.ggplot2.lm(dataset = core.data,fit.object = fit.inter.mlr, "MLR of Raw Prediction + Sand:Clay Interaction")
+plot.ggplot2.pdf(dataframe.data = data.frame(fit.untran.mlr$residuals),xlab1 = "Residual (psi)",xlab2 = "Residuals(psi)", title = " for MLR Raw Predictors")
+plot.ggplot2.pdf(dataframe.data = data.frame(fit.untran.mlr$residuals),xlab1 = "Residual (psi)",xlab2 = "Residuals(psi)",title = " for MLR Raw Predictors+ MLR of Raw Prediction + Sand:Clay Interaction")
+```
+Resampling the dataset to calculate the efficacy of the model
+```{r}
+# plotting for the Raw Predictors
+simulation.reg(formula.lm = form.untran.par, dataset = core.data,title = "MLR of Raw Predictors")
+# Plotting for the Raw Predictors and interaction terms
+simulation.reg(formula.lm = form.untran.par, dataset = core.data,title = "MLR of Raw Predictors and Interaction Sand:Clay")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
