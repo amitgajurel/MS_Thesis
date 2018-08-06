@@ -1081,8 +1081,6 @@ ggplot(data = raw.data.allsoil[raw.data.allsoil$UCS.code =="Fail",], aes(x = UCS
 
 ```
 
-
-
 ```{r, fig.width= 2.5, fig.height= 3}
 #binwidth = 50
 ggplot(data = raw.data.allsoil)+
