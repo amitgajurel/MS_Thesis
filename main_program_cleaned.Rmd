@@ -110,6 +110,8 @@ pairs(core.data[,required_paramters])
 # Regression
 ## Multiple Linear Regression (MLR)
 Multiple linear regression was performed with raw predictors such as LL, PL, percentage of Clay, percentage of Sand, lime percentage, and cement percentage. An interaction between sand and clay was also added in the second model which improved the accuracy of the model and proved to be a significant parameter.
+
+### Basic Formulation and Line
 ```{r}
 # Formula to be used as lm object
 form.untran.par = as.formula(UCS.psi ~ LL+ PL + Clay + Sand+ Lime+ Cement)
@@ -126,7 +128,9 @@ plot.ggplot2.lm(dataset = core.data,fit.object = fit.inter.mlr, "MLR of Raw Pred
 plot.ggplot2.pdf(dataframe.data = data.frame(fit.untran.mlr$residuals),xlab1 = "Residual (psi)",xlab2 = "Residuals(psi)", title = " for MLR Raw Predictors")
 plot.ggplot2.pdf(dataframe.data = data.frame(fit.untran.mlr$residuals),xlab1 = "Residual (psi)",xlab2 = "Residuals(psi)",title = " for MLR Raw Predictors+ MLR of Raw Prediction + Sand:Clay Interaction")
 ```
-Resampling the dataset to calculate the efficacy of the model
+
+### Resampling 
+This is used to calculate the efficacy of the model and uncertainity of prediction.
 ```{r}
 # plotting for the Raw Predictors
 simulation.reg(formula.lm = form.untran.par, dataset = core.data,title = "MLR of Raw Predictors")
@@ -134,6 +138,27 @@ simulation.reg(formula.lm = form.untran.par, dataset = core.data,title = "MLR of
 simulation.reg(formula.lm = form.untran.par, dataset = core.data,title = "MLR of Raw Predictors and Interaction Sand:Clay")
 ```
 
+## Regularization using ridge and lasso Regression
+This is generally to reduce the number of the parameter which is increasing the variace rather than explaining the physical process. We can see from the results that lambda values are near to 0. This suggest that shirnking the parametes doesnt decrease the variance.
+
+```{r}
+# preparing dataset for compuatation
+x.value = model.matrix(form.untran.par, data = core.data)[,-1] # changing the dataframe to matrix and removing the bias column that is generally created while using the function. It also tranforms qualitative variables into dummy variables 
+y.value = core.data$UCS.psi
+# Creating the vector of values for regularization coefficients
+grid = 10^seq(10,-10,length = 500)
+ridge.reg = cv.glmnet(x.value,y.value, alpha = 0, lambda = grid) # ridge regression with 5 fold CV
+plot(ridge.reg, main = "lambda value for Ridge regression")
+lasso.reg = cv.glmnet(x.value,y.value, alpha = 1, lambda = grid) # lasso with 5 fold CV
+plot(lasso.reg, main = " Lambda value for lasso regression")
+```
+## General Additive Model (GAM)
+### Natural Splines
+```{r}
+
+
+
+```
 
 
 
