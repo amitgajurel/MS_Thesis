@@ -12,10 +12,19 @@ This portion is writen to intialize the workspace and remove all the variables i
 rm(list = ls())
 # setting up the output of knitr such that code
 ```
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+	eval = FALSE,
+	message = FALSE,
+	include = FALSE
+)
+# library(reticulate)
+# use_virtualenv("r-reticulate")
+```
 # Loading packages
 This portion is written to load the additional packages required to do the computations
 ```{r}
-pkgs = c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments","leaps" ,"devtools","caTools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima", "microbenchmark","profvis","memoise","compiler")
+pkgs = c("ggplot2","dplyr","GGally","plotly","AID","MASS","boxcoxmix","car","moments","leaps" ,"devtools","caTools","readxl","class","ROCR","qwraps2","knitr","e1071","glmnet","gam","splines","akima", "microbenchmark","profvis","memoise","compiler","expss")
 
 # installing the pakages if running for the first time
 #install.packages(pkgs)
@@ -29,7 +38,6 @@ This portion is written to load the functions from **functions.for.main.program.
 source("functions.for.main.program.R") # loading functions from the program NOTE: This is very efficient and fast
 ```
 
-
 # Loading Datasets
 ```{r}
 # parameters to be used in the study
@@ -40,10 +48,6 @@ data.aussies = read_excel("Data/Soils.xlsx",sheet = "Australian_Modified_Proctor
 data.us = read_excel("Data/Soils.xlsx",sheet = "August5") %>% filter(.,Location == "US") %>%cleanup.NA.columns(.,required_paramters) 
 data.world = read_excel("Data/Soils.xlsx",sheet = "August5") %>% cleanup.NA.columns(.,required_paramters)
 
-# cutoff limit for strength classification in psi is taken as median for now
-strength.limit = readline(prompt = "Input Cuttoff Strength in psi: ") %>% as.double()
-#strength.limit = 300 
-
 # Assigning the selected dataset to a common working dataset
 core.data = data.frame(NA)
 user.query = menu(c("1. Australian Soil- Modified Proctor","2. American Soils - Standard Proctor", "3. Global Database - Standard Proctor"), graphics = FALSE, title = " Select the dataset type for the development of the model")
@@ -51,8 +55,6 @@ if(user.query == 1) core.data = data.aussies
 if(user.query == 2) core.data = data.us
 if(user.query == 3) core.data = data.world
 
-# creating a new parameter depending on pass and failing of the dataset
-core.data$UCS.code = ifelse(core.data$UCS.psi < strength.limit,"Fail","Pass")
 ```
 Loading other datasets if reqired later for validation and other purpose.
 ```{r}
@@ -154,11 +156,387 @@ plot(lasso.reg, main = " Lambda value for lasso regression")
 ```
 ## General Additive Model (GAM)
 ### Natural Splines
-```{r}
+```{r, eval=FALSE}
+df.ns = seq(1,4,1) # defining the range of degree of freedom
+RMSE = matrix(NA,length(df.ns),1) # predefining a matrix for storing mean performance
+for(ii in 1:length(df.ns)){
+  RMSE[ii] = simulation.tuning.ns.old(df.ns[ii])
+}
+plot(RMSE, type = "l")
+df.ns.optim=df.ns[which.min(RMSE)]
+
+# use the optimum values to get the prediction
+gam.ns.formula = as.formula(UCS.psi~ ns(LL, df = df.ns.optim)+ns(PL, df = df.ns.optim)+
+                              ns(Clay, df = df.ns.optim)+ns(Sand, df = df.ns.optim)+Lime+Cement) # writing the formula with optimum
+### Using MCMC
+simulation.reg(formula.lm = gam.ns.formula,dataset = core.data, title = "Natural Splines") # running 5 fold CV with the new model for 200 simulation of random division into test/train data
 
 
 
 ```
+
+```{r}
+# Optimizing the values of degree of freedom to be used in the natural splines
+# The value is optimized for each parameter. First the range of values if given using the start and end values. Each parameters is optimized by changing the value of that single paraemters with holding all other constant. Median RMSE value is used as the measure. The first parameter is optimized. Successive parameters are optimized using optimized value of the last parameter.
+start.value = 1
+end.value = 4
+pass.vec = seq(start.value,end.value)
+opt.vec = c(1,1,1,1) # length of the vector is equal to the number of dof to be optimized. This was used for LL, PL, Clay, and sand. DOF was not optimized for Lime and Cement as they seemed more like factors.
+RMSE.value = array(data = NA, dim = length(pass.vec))
+for (kk in 1:length(opt.vec)) {
+  
+  for (ii in 1:length(pass.vec)) {
+    opt.vec[kk] = pass.vec[ii]
+    RMSE.value[ii] = simulation.tuning.ns(opt.vec, spline.type = "ns")
+  }
+  opt.vec[kk] = pass.vec[which.min(RMSE.value)]
+}
+# Running simulations with the optimized parameter and 
+simulation.ns(opt.vec, title = " Natural Splines using optimized Degree of Freedoms", spline.type = "ns")
+```
+### Smoothing Splines
+```{r}
+start.value = 1
+end.value =10
+pass.vec = seq(start.value,end.value)
+opt.vec = c(1,1,1,1)
+RMSE.value = array(data = NA, dim = length(pass.vec))
+for (kk in 1:length(opt.vec)) {
+  for (ii in 1:length(pass.vec)) {
+    opt.vec[kk] = pass.vec[ii]
+    RMSE.value[ii] = simulation.tuning.ns(opt.vec, spline.type = "ss")
+  }
+  opt.vec[kk] = pass.vec[which.min(RMSE.value)]
+}
+# Running simulations with the optimized parameter and 
+simulation.ns(opt.vec, title = " Natural Splines using optimized Degree of Freedoms", spline.type = "ss")
+```
+
+# Classification
+## Data preparation for classification
+```{r}
+# cutoff limit for strength classification in psi is taken as median for now
+strength.limit = readline(prompt = "Input Cuttoff Strength in psi: ") %>% as.double()
+#strength.limit = 300 
+# creating a new parameter depending on pass and failing of the dataset
+core.data$UCS.code = ifelse(core.data$UCS.psi < strength.limit,"Fail","Pass")
+core.data$UCS.class = ifelse(core.data$UCS.psi < strength.limit,0,1)
+
+# Defining formula
+form.inter.par.lr = as.formula(UCS.class ~ LL+ PL + Clay + Sand+ Lime+ Cement+ Sand:Clay)
+
+```
+## Logistic Regression
+### Basic Formulation
+```{r, eval=FALSE}
+fit.untran.lr = glm(form.inter.par.lr, family = binomial, data = core.data)
+summary(fit.untran.lr)
+lr.prob = predict(fit.untran.lr, type = "response", colnames = "Predicted") # Output is the probability of passing using train data with the model.
+
+# ROC and AUC of the classifier
+pred = prediction(predictions = lr.prob, labels = core.data$UCS.class) # inputs are probability of the predictions to be 1 and acutal 1 & 0 labels
+roc = performance(pred,"tpr","fpr") # uses the pred to calcuated the various parametes required to calculate tpr and fpr for all values of alpha
+plot(roc,colorize = T,main = "ROC Curve"); abline(a=0,b=1) # plot of ROC curve for the classifier
+
+# Using the ratio to find the top left point of the function 
+# This can also be done using opt.alpha.ROC function
+ratio = (unlist(roc@y.values) / unlist(roc@x.values)) %>% rm.na() %>% quantile.data()
+
+plot(ratio)
+alpha.location = length(ratio) - which.max(ratio)
+alpha = quantile.data(roc@alpha.values[[1]])[alpha.location]
+#alpha = 0.4
+lr.pred = ifelse(lr.prob < alpha,"Fail","Pass") # using optimized value of alpha to classify as pass or fail
+cro(lr.pred,core.data$UCS.code) # creates a confusion matrix for visualization of results
+mean(lr.pred == core.data$UCS.code) # calculate total correct prediction
+```
+
+```{r}
+# optimum value of alpha was obtained by taking the ration of TPR and FPR. The values within the IQR was used to avoid the outliers and the problems it caused. 
+
+fit.untran.lr = glm(form.inter.par.lr, family = binomial, data = core.data)
+lr.prob = predict(fit.untran.lr, type = "response") # Output is the probability of passing using train data with the model.
+summary(fit.untran.lr)
+alpha = opt.alpha.ROC(probability.of.class = lr.prob,
+                      coulmn.UCS.binary = core.data$UCS.class)
+plot.roc(lr.prob,core.data$UCS.class, main = "Logistic Regression")
+lr.pred = ifelse(lr.prob < alpha,"Fail","Pass") # using optimized value of alpha to classify as pass or fail
+cro(lr.pred,core.data$UCS.code) # creates a confusion matrix for visualization of results
+mean(lr.pred == core.data$UCS.code) # calculate total correct prediction
+```
+
+### Resampling
+
+```{r, using alpha as each value of simulation for train and test set }
+# Alpha is optimized for each test set and training set to maximize the ratio of TPR/FRP. Therefore the alpha that is used in each simulation is optimum value of alpha from the ROC curve that given maximum value of ratio of TPR and FPR. The data from ROC includes the only data from within IQR
+
+# Maximizing alpha gives us the Maximum value of TPR and minimum value of FPR of the model. If we change the value of alpha towards higher value, TPR increases whereas FPR increases accordingly which is not a good sign if you want both positive and negative predictions to be optimal.
+
+formula.class = form.inter.par.lr
+core.data = core.data
+simul = 100
+k=5
+
+jj = 1
+# intializaing for train set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+#intializing test sets
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(core.data), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    glm.fit = glm(formula.class, data = core.data[fold!=ii,], family = binomial)# using 4 out of 5 data part to come up with the model parameters as train set
+    
+    # Test Error Calculation
+    glm.probs = predict(glm.fit, newdata = core.data[fold==ii,], type = "response") # predicting the dataset with test set
+     alpha = opt.alpha.ROC(predict(glm.fit,newdata = core.data[fold==ii,], type = "response"), core.data[fold==ii,]$UCS.class) # calculating the optimum value of alpha using only training set
+    #alpha = 0.36
+    glm.pred = ifelse(glm.probs > alpha,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & core.data[fold==ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & core.data[fold==ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & core.data[fold==ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & core.data[fold==ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(glm.pred ==core.data[fold==ii,]$UCS.code)#ratio of correct prediction
+    auc[jj,ii] = auc.calc(probability.of.class = glm.probs,core.data[fold==ii,]$UCS.class)
+    
+    # training error calculation
+    
+    glm.probs = predict(glm.fit, newdata = core.data[fold!=ii,], type = "response") # predicting the dataset with test set
+     alpha = opt.alpha.ROC(predict(glm.fit,newdata = core.data[fold!=ii,], type = "response"), core.data[fold!=ii,]$UCS.class) # calculating the optimum value of alpha using only training set
+    glm.pred = ifelse(glm.probs > alpha,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & core.data[fold!=ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & core.data[fold!=ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & core.data[fold!=ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & core.data[fold!=ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(glm.pred ==core.data[fold!=ii,]$UCS.code)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(probability.of.class = glm.probs, core.data[fold!=ii,]$UCS.class)
+  }
+}
+# plotting the results using plot.mean.performance function
+for(mm in 1:9){
+  plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+                             fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"LR")[[mm]])
+  # plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,
+  #                                "LR")[[mm]])
+  # 
+}
+
+
+```
+
+```{r, using alpha as constant - median value of all the simulation}
+# Alpha used as median vaule of the simulating the dataset with similar number of time.
+
+formula.class = form.inter.par.lr
+core.data = core.data
+simul = 100
+k=5
+alpha = simulation.opt.alpha.lr()
+jj = 1
+# intializaing for train set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+#intializing test sets
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(core.data), replace = TRUE) # selecting random samples
+  for (ii in 1:k) {
+    glm.fit = glm(formula.class, data = core.data[fold!=ii,], family = binomial)# using 4 out of 5 data part to come up with the model parameters as train set
+    
+    # Test Error Calculation
+    glm.probs = predict(glm.fit, newdata = core.data[fold==ii,], type = "response") # predicting the dataset with test set
+    
+    #alpha = 0.36
+    glm.pred = ifelse(glm.probs > alpha,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & core.data[fold==ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & core.data[fold==ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & core.data[fold==ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & core.data[fold==ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(glm.pred ==core.data[fold==ii,]$UCS.code)#ratio of correct prediction
+    auc[jj,ii] = auc.calc(probability.of.class = glm.probs,core.data[fold==ii,]$UCS.class)
+    
+    # training error calculation
+    
+    glm.probs = predict(glm.fit, newdata = core.data[fold!=ii,], type = "response") # predicting the dataset with test set
+    glm.pred = ifelse(glm.probs > alpha,"Pass","Fail") # Setting the threshold value for passing
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(glm.pred == "Pass" & core.data[fold!=ii,]$UCS.code == "Fail"))# counting the number of false postive
+    tn = sum(1==(glm.pred == "Fail" & core.data[fold!=ii,]$UCS.code == "Fail"))# counting the number of true negative
+    tp = sum(1==(glm.pred == "Pass" & core.data[fold!=ii,]$UCS.code == "Pass"))# counting the number of true positive
+    fn = sum(1==(glm.pred == "Fail" & core.data[fold!=ii,]$UCS.code == "Pass"))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(glm.pred ==core.data[fold!=ii,]$UCS.code)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(probability.of.class = glm.probs, core.data[fold!=ii,]$UCS.class)
+  }
+}
+# plotting the results using plot.mean.performance function
+for(mm in 1:9){
+  plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+                             fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"LR")[[mm]])
+  # plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,
+  #                                "LR")[[mm]])
+  # 
+}
+
+
+```
+
+## Discriminant Analysis
+
+### Linear Discriminant Analysis
+Basic Formulation
+``` {r}
+# using whole dataset
+lda.fit = lda(form.inter.par.lr, data = core.data)
+#lda.fit
+plot(lda.fit)
+lda.pred = predict(lda.fit, newdata = core.data)
+alpha = opt.alpha.ROC(lda.pred$posterior[,2],core.data$UCS.class)
+# lda.class = ifelse(lda.pred$posterior[,2] < alpha,0,1) # using optimal value of alpha to seperated the classes rather than the class with maximum probability.
+lda.class = lda.pred$class
+table(lda.class,core.data$UCS.class)
+mean(lda.class == core.data$UCS.class)# mean of the whole data mean performance
+
+## Making ROC and AUC - for binary classifiers only
+plot.roc(lda.pred$posterior[,2],core.data$UCS.class,main = "ROC Curve for LDA") # using the function plot.roc
+
+```
+
+Simulation to determine the performance of the model
+```{r }
+## Alpha is optimized for each test example to maximize the ratio of TPR/FRP. Therefore the alpha that is used in each simulation is optimum value of alpha from the ROC curve that given maximum value of ratio of TPR and FPR. The data from ROC includes the only data from 
+
+# fig.height=2.5, fig.width=3.5
+# using test train data
+# Using test and train data
+simul = 100 # number of simulations
+jj = 1
+k = 5 # number of folds of sample
+#alpha = simulation.opt.alpha.lda()
+
+mean.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+# Initialization for training set
+mean.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+auc.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+fpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+tpr.performance.train = matrix(NA,simul,k, dimnames = list(NULL,paste(1:k))) # predefining a matrix for storing mean performance
+
+
+for (jj in 1:simul) {
+  ii= 1
+  #set.seed(10)
+  fold = sample(x = 1:k,size = nrow(core.data), replace = TRUE) # selecting random samples
+    for (ii in 1:k) {
+    lda.fit = lda(formula.class, data = core.data[fold!=ii,])# using 4 out of 5 data part to come up with the model parameters as train set
+    lda.pred = predict(lda.fit, newdata = core.data[fold==ii,]) # predicting the dataset with test set
+    # alpha = opt.alpha.ROC(predict(lda.fit, 
+    #                               newdata = core.data[fold==ii,])$posterior[,2],
+    #                                           core.data[fold==ii,]$UCS.class) # calculating the optimum value of alpha using only test set
+    # 
+    # lda.class = ifelse(lda.pred$posterior[,2] < alpha,0,1)
+    lda.class = lda.pred$class
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(lda.class == 1 & core.data[fold==ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(lda.class == 0 & core.data[fold==ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(lda.class == 1 & core.data[fold==ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(lda.class == 0 & core.data[fold==ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance[jj,ii] = mean(lda.pred$class == core.data[fold==ii,]$UCS.class)#each row is a simulation each column is k-fold CV values
+    auc[jj,ii] = auc.calc(lda.pred$posterior[,2],core.data[fold==ii,]$UCS.class)
+    
+    # training error calculation
+    lda.pred = predict(lda.fit, newdata = core.data[fold!=ii,]) # predicting the dataset with test set
+    #
+    # alpha = opt.alpha.ROC(predict(lda.fit,
+    #                               newdata = core.data[fold!=ii,])$posterior[,2],
+    #                                           core.data[fold!=ii,]$UCS.class) # calculating the optimum value of alpha using only training set
+    # lda.class = ifelse(lda.pred$posterior[,2] < alpha,0,1)
+    lda.class = lda.pred$class
+    # calculating true positive ratio and false positive ratio
+    fp = sum(1==(lda.class == 1 & core.data[fold!=ii,]$UCS.class == 0))# counting the number of false postive
+    tn = sum(1==(lda.class == 0 & core.data[fold!=ii,]$UCS.class == 0))# counting the number of true negative
+    tp = sum(1==(lda.class == 1 & core.data[fold!=ii,]$UCS.class == 1))# counting the number of true positive
+    fn = sum(1==(lda.class == 0 & core.data[fold!=ii,]$UCS.class == 1))# counting the number of false negative
+    fpr.performance.train[jj,ii] = fp/(fp+tn) # false positive ratio
+    tpr.performance.train[jj,ii] = tp/(tp+fn) # true negative ratio
+    mean.performance.train[jj,ii] = mean(lda.pred$class == core.data[fold!=ii,]$UCS.class)#ratio of correct prediction
+    auc.train[jj,ii] = auc.calc(lda.pred$posterior[,2],core.data[fold!=ii,]$UCS.class)
+    
+  }
+}
+
+# plotting the results using plot.mean.performance function
+for(mm in 1:9){
+  plot(plot.mean.performance(fpr.performance,tpr.performance,mean.performance,auc,
+                             fpr.performance.train,tpr.performance.train,mean.performance.train,auc.train,"LDA")[[mm]])
+
+#   plot(plot.mean.performance.old(fpr.performance,tpr.performance,mean.performance,auc,"LDA")[[mm]])
+# 
+}
+
+
+```
+
+### Quadratic Discriminant Analysis
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
